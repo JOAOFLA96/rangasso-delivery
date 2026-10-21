@@ -12,9 +12,6 @@ test.beforeEach(async ({ page }) => {
   await page.route('https://viacep.com.br/**', (r) => r.fulfill({ json: { erro: true } }));
 });
 
-test.afterAll(async () => {
-  await db.end();
-});
 
 test('cardápio carrega, sem rolagem horizontal, com indisponível bloqueado', async ({ page }) => {
   await page.goto('/cardapio');

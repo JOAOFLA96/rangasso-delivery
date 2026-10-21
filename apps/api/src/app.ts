@@ -47,7 +47,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     hsts: isProd ? { maxAge: 31536000 } : false,
   });
   await app.register(cookie);
-  await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
+  await app.register(rateLimit, { max: config.GLOBAL_RATE_LIMIT, timeWindow: '1 minute' });
   await app.register(multipart);
 
   app.setErrorHandler((err: FastifyError | AppError, req, reply) => {
