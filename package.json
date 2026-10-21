@@ -1,0 +1,20 @@
+{
+  "name": "rangasso-delivery",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm -w apps/api run dev",
+    "dev:web": "npm -w apps/web run dev",
+    "build": "npm -w apps/web run build && npm -w apps/api run build && npm -w apps/agent run build",
+    "test": "npm -w apps/api test && npm -w apps/agent test",
+    "migrate": "npm -w apps/api run migrate"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  }
+}

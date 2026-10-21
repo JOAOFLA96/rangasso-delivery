@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rangasso
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: rangasso_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U rangasso" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://rangasso:ci_only_password@localhost:5432/rangasso_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck e testes da API
+        run: |
+          npx -w apps/api tsc --noEmit -p apps/api/tsconfig.json
+          npm -w apps/api test
+      - name: Build do frontend
+        run: npm -w apps/web run build

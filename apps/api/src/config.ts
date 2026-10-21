@@ -1,0 +1,35 @@
+import { z } from 'zod';
+
+const schema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: z.coerce.number().int().default(3000),
+  HOST: z.string().default('0.0.0.0'),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL é obrigatório'),
+  // URL pública (ex.: https://delivery.rangasso.com.br). Usada para checagem de origem e links.
+  PUBLIC_URL: z.string().url().default('http://localhost:3000'),
+  STORE_SLUG: z.string().default('rangasso'),
+  UPLOAD_DIR: z.string().default('./data/uploads'),
+  WEB_DIST_DIR: z.string().default('../web/dist'),
+  SESSION_TTL_HOURS: z.coerce.number().int().positive().default(12),
+  // Segredo usado para gerar hash do IP do cliente (anti-abuso sem guardar o IP puro).
+  IP_HASH_SECRET: z.string().min(16).default('dev-only-ip-hash-secret-change-me'),
+  TRUST_PROXY: z.enum(['true', 'false']).default('false'),
+  LOG_LEVEL: z.string().default('info'),
+  // Limite de pedidos por IP a cada 5 minutos. Operadoras móveis compartilham IP (CGNAT), então não deixar baixo demais.
+  ORDER_RATE_LIMIT: z.coerce.number().int().positive().default(30),
+  LOGIN_RATE_LIMIT: z.coerce.number().int().positive().default(10),
+});
+
+const parsed = schema.safeParse(process.env);
+if (!parsed.success) {
+  console.error('Configuração inválida:', parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+  process.exit(1);
+}
+
+export const config = parsed.data;
+export const isProd = config.NODE_ENV === 'production';
+
+if (isProd && config.IP_HASH_SECRET.startsWith('dev-only')) {
+  console.error('IP_HASH_SECRET precisa ser definido em produção.');
+  process.exit(1);
+}
