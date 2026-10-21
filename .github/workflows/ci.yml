@@ -17,7 +17,7 @@ jobs:
           POSTGRES_DB: rangasso_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U rangasso" --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-cmd "pg_isready -U rangasso -d rangasso_test" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://rangasso:ci_only_password@localhost:5432/rangasso_test
     steps:
@@ -33,10 +33,14 @@ jobs:
           npm -w apps/agent test
       - name: Typecheck e testes da API
         run: |
-          npx -w apps/api tsc --noEmit -p apps/api/tsconfig.json
+          npx tsc --noEmit -p apps/api/tsconfig.json
           npm -w apps/api test
       - name: Build do frontend
         run: npm -w apps/web run build
+      - name: Integração ponta a ponta (API + agente + impressora simulada)
+        env:
+          INTEGRATION_DATABASE_URL: postgres://rangasso:ci_only_password@localhost:5432/rangasso_integ
+        run: npm -w apps/agent run test:integration
 
   agent-windows:
     runs-on: windows-latest

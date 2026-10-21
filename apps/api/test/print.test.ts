@@ -194,4 +194,23 @@ describe('agente de impressão', () => {
     expect(res.json().jobs).toHaveLength(1);
     expect(Date.now() - t0).toBeLessThan(3000);
   });
+
+  it('long-poll aberto antes da revogação não pega o pedido novo', async () => {
+    const pending = app.inject({ method: 'GET', url: '/api/agent/jobs?wait=5', headers: agent });
+    await new Promise((r) => setTimeout(r, 200));
+    await app.inject({ method: 'POST', url: `/api/admin/printer/devices/${deviceId}/revoke`, headers: admin });
+    const o = await newOrder();
+    expect((await pending).json().jobs).toHaveLength(0);
+    expect(await orderPrint(o.number)).toBe('pending');
+  });
+
+  it('long-poll acorda na hora da retentativa agendada', async () => {
+    await newOrder();
+    const [job] = (await claim()).json().jobs;
+    await report(job.id, 'failed', 'Sem papel'); // próxima tentativa em 5 s
+    const t0 = Date.now();
+    const res = await app.inject({ method: 'GET', url: '/api/agent/jobs?wait=25', headers: agent });
+    expect(res.json().jobs.map((j: any) => j.id)).toEqual([job.id]);
+    expect(Date.now() - t0).toBeLessThan(8000);
+  }, 15_000);
 });

@@ -9,11 +9,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc --noEmit -p tsconfig.json && node scripts/build.mjs",
     "package:win": "node scripts/package-win.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "node scripts/build.mjs && vitest run -c vitest.integration.config.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
     "esbuild": "^0.28.2",
+    "pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
