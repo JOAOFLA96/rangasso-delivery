@@ -112,6 +112,24 @@ describe('agente de impressão', () => {
     expect(await orderPrint(o.number)).toBe('printed');
   });
 
+  it('aviso atrasado do próprio agente esclarece o resultado incerto', async () => {
+    const o = await newOrder();
+    const [job] = (await claim()).json().jobs;
+    expect(job.claimId).toBeTruthy();
+    await report(job.id, 'sending');
+    await pool.query(`UPDATE print_jobs SET lease_expires_at = now() - interval '1 second' WHERE id = $1`, [job.id]);
+    await claim();
+    expect(await orderPrint(o.number)).toBe('uncertain');
+    expect((await report(job.id, 'sent', 'enviado antes da queda')).statusCode).toBe(200);
+    expect(await orderPrint(o.number)).toBe('sent');
+  });
+
+  it('heartbeat devolve a configuração da impressora do painel', async () => {
+    await pool.query(`UPDATE store_settings SET printer_connection = 'network', printer_host = '192.168.0.50', paper_columns = 42`);
+    const r = await app.inject({ method: 'POST', url: '/api/agent/heartbeat', headers: agent, payload: { agentVersion: '1', printer: { mode: 'auto', target: '', online: null } } });
+    expect(r.json().printer).toMatchObject({ connection: 'network', host: '192.168.0.50', port: 9100, columns: 42 });
+  });
+
   it('reimpressão manual é registrada e numerada', async () => {
     const o = await newOrder();
     const [job] = (await claim()).json().jobs;

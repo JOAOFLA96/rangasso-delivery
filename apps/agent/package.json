@@ -1,0 +1,24 @@
+{
+  "name": "@rangasso/agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agente de impressão Rangasso para Windows (Epson TM-T20).",
+  "scripts": {
+    "dev": "tsx src/cli.ts run --config ./config.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json && node scripts/build.mjs",
+    "package:win": "node scripts/package-win.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.3"
+  }
+}

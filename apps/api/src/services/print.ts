@@ -133,7 +133,7 @@ export async function claimJobs(storeId: string, deviceId: string, limit = 5) {
            WHERE store_id = $1 AND status IN ('pending','failed') AND attempts < max_attempts AND next_attempt_at <= now()
            ORDER BY created_at
            LIMIT $3 FOR UPDATE SKIP LOCKED)
-        RETURNING j.id, j.order_id, j.kind, j.reprint_number, j.copies, j.payload, j.attempts, j.created_at`,
+        RETURNING j.id, j.order_id, j.kind, j.reprint_number, j.copies, j.payload, j.attempts, j.created_at, j.claimed_at`,
       [storeId, deviceId, limit, CLAIM_LEASE_SECONDS],
     );
     for (const j of r.rows) {
@@ -153,8 +153,9 @@ export async function claimJobs(storeId: string, deviceId: string, limit = 5) {
 export type AgentReport = 'sending' | 'sent' | 'printed' | 'failed' | 'uncertain';
 const ALLOWED_FROM: Record<AgentReport, string[]> = {
   sending: ['claimed'],
-  sent: ['claimed', 'sending'],
-  printed: ['claimed', 'sending', 'sent'],
+  // 'uncertain' incluído: se o agente imprimiu mas o aviso atrasou (internet caiu), ele mesmo esclarece depois.
+  sent: ['claimed', 'sending', 'uncertain'],
+  printed: ['claimed', 'sending', 'sent', 'uncertain'],
   failed: ['claimed', 'sending'],
   uncertain: ['claimed', 'sending'],
 };

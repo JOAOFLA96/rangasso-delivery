@@ -1,0 +1,49 @@
+﻿AGENTE DE IMPRESSÃO RANGASSO
+============================
+
+O que é: um programa que fica rodando no computador do balcão, recebe os pedidos do
+sistema de delivery e imprime as comandas na Epson TM-T20. Ele só faz conexões de saída
+(HTTPS) para o servidor; não abre portas no computador nem na rede da loja.
+
+ANTES DE INSTALAR
+1. Instale a impressora no Windows (driver Epson APD ou "Generic / Text Only") e imprima
+   uma página de teste pelo Windows. Anote o nome exato da impressora.
+   - Se a TM-T20 for de rede (Ethernet), anote o IP (imprima a folha de status segurando FEED ao ligar).
+2. No painel (Configurações > Impressora): escolha a conexão (USB/rede), o nome ou o IP,
+   a largura do papel, e clique em "Gerar chave do agente". Copie a chave (começa com rgd_).
+
+INSTALAR
+- Com o instalador (RangassoAgentSetup-x.y.z.exe): execute, informe o endereço do sistema e a chave.
+- Com o .zip: extraia, abra o PowerShell como Administrador nesta pasta e rode:
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -ServerUrl https://SEU-ENDERECO -Token rgd_SUA_CHAVE
+
+O serviço "Rangasso - Agente de Impressão" inicia junto com o Windows e reinicia sozinho se cair.
+
+TESTAR
+  "C:\Program Files\RangassoAgent\rangasso-agent.cmd" test-connection
+  "C:\Program Files\RangassoAgent\rangasso-agent.cmd" list-printers
+  "C:\Program Files\RangassoAgent\rangasso-agent.cmd" test-print
+  "C:\Program Files\RangassoAgent\rangasso-agent.cmd" status
+Ou pelo painel: Configurações > Impressora > Imprimir teste.
+
+ONDE FICAM AS COISAS
+  Programa:      C:\Program Files\RangassoAgent
+  Configuração:  C:\ProgramData\RangassoAgent\config.json  (só administradores)
+  Logs:          C:\ProgramData\RangassoAgent\logs  (14 dias)
+  Fila local:    C:\ProgramData\RangassoAgent\state.json
+
+ATUALIZAR
+  Rode o instalador da versão nova (ou install.ps1 do zip novo). A configuração é mantida.
+
+DESINSTALAR
+  Painel de Controle > Programas > Agente Rangasso, ou:
+  powershell -ExecutionPolicy Bypass -File "C:\Program Files\RangassoAgent\uninstall.ps1" [-RemoveData]
+
+PROBLEMAS COMUNS
+- "Credencial recusada": a chave foi revogada no painel. Gere outra e rode install.ps1 -Token rgd_NOVA.
+- Saem caracteres estranhos no lugar de acentos: no driver/utilitário da Epson, deixe a tabela de
+  caracteres padrão; o agente seleciona PC860 (português) em cada comanda.
+- Impressora USB não aparece para o serviço: o serviço roda como "Sistema Local"; a impressora precisa
+  estar instalada para todos os usuários (impressora local, não mapeada só para um usuário).
+- Comanda "incerta" no painel: o agente não sabe se o papel saiu (ex.: caiu no meio). Confira no balcão
+  e use "Marcar como impressa" ou "Imprimir de novo".

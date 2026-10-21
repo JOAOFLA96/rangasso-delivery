@@ -51,7 +51,17 @@ export async function agentRoutes(app: FastifyInstance) {
       [d.id, b.agentVersion, JSON.stringify({ ...b.printer, localQueue: b.localQueue ?? 0 }), b.printer.error ?? null],
     );
     emitStoreEvent(d.storeId, { type: 'agent.updated', deviceId: d.id });
-    return { ok: true, serverTime: new Date().toISOString(), device: { name: d.name } };
+    // Configuração da impressora definida no painel; o agente usa quando o config local está em modo "auto".
+    const s = (await pool.query(
+      `SELECT printer_connection, printer_host, printer_port, printer_windows_name, paper_columns, printer_model FROM store_settings WHERE store_id = $1`,
+      [d.storeId],
+    )).rows[0];
+    return {
+      ok: true,
+      serverTime: new Date().toISOString(),
+      device: { name: d.name },
+      printer: { connection: s.printer_connection, host: s.printer_host, port: s.printer_port, windowsName: s.printer_windows_name, columns: s.paper_columns, model: s.printer_model },
+    };
   });
 
   // Long-poll: devolve trabalhos assim que existirem ou após `wait` segundos sem nada.
@@ -77,7 +87,7 @@ export async function agentRoutes(app: FastifyInstance) {
     }
     for (const j of jobs) emitStoreEvent(d.storeId, { type: 'print.updated', jobId: j.id, orderId: j.order_id });
     return {
-      jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, reprintNumber: j.reprint_number, copies: j.copies, attempt: j.attempts, payload: j.payload, createdAt: j.created_at })),
+      jobs: jobs.map((j) => ({ id: j.id, claimId: new Date(j.claimed_at).toISOString(), kind: j.kind, reprintNumber: j.reprint_number, copies: j.copies, attempt: j.attempts, payload: j.payload, createdAt: j.created_at })),
     };
   });
 
