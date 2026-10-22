@@ -5,7 +5,7 @@ import type { Db } from '../db/pool.js';
 import { tx } from '../db/pool.js';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
 import { newToken } from '../lib/security.js';
-import { cleanText, normalizeCep, normalizePhone } from '../lib/text.js';
+import { cleanText, normalizeCep, normalizeName, normalizePhone } from '../lib/text.js';
 import { effectivePrice } from './pricing.js';
 import { getOpenState, getSettings } from './store.js';
 import { createPrintJob } from './print.js';
@@ -37,10 +37,13 @@ export const createOrderSchema = z.object({
     cep: z.string().max(12).optional().default(''),
     street: z.string().min(2).max(120),
     number: z.string().min(1).max(15),
-    neighborhoodId: z.string().uuid(),
+    // Bairro da lista (id) ou o nome vindo do CEP/digitado, quando a loja aceita bairros fora da lista.
+    neighborhoodId: z.string().uuid().optional(),
+    neighborhoodName: z.string().trim().min(2).max(80).optional(),
+    city: z.string().trim().max(80).optional().default(''),
     complement: z.string().max(80).optional().default(''),
     reference: z.string().max(120).optional().default(''),
-  }),
+  }).refine((a) => a.neighborhoodId || a.neighborhoodName, { path: ['neighborhoodId'], message: 'Selecione o bairro.' }),
   notes: z.string().max(300).optional().default(''),
   payment: z.object({
     method: z.enum(['cash', 'pix', 'card']),
@@ -140,24 +143,54 @@ export async function priceItems(db: Db, storeId: string, items: CreateOrderInpu
   return priced;
 }
 
+export interface HoodRef { id?: string | null; name?: string | null; city?: string | null }
+
+// Encontra o bairro pelo id ou pelo nome (sem acento/caixa). Sem cadastro e com a loja aceitando bairros fora da lista,
+// devolve um bairro "novo" com taxa a combinar; `create` cadastra esse bairro para a loja definir a taxa depois.
+async function resolveHood(db: Db, storeId: string, settings: any, ref: HoodRef, create: boolean) {
+  if (ref.id) {
+    const n = await db.query('SELECT * FROM neighborhoods WHERE id = $1 AND store_id = $2', [ref.id, storeId]);
+    return n.rows[0] ?? null;
+  }
+  const name = cleanText(ref.name ?? '', 80);
+  if (!name) return null;
+  const all = await db.query('SELECT * FROM neighborhoods WHERE store_id = $1', [storeId]);
+  const found = all.rows.find((n) => normalizeName(n.name) === normalizeName(name));
+  if (found) return found;
+  if (!settings.accept_unlisted_neighborhoods) return null;
+  const city = cleanText(ref.city ?? '', 80);
+  if (!create) return { id: null, name, city, fee_cents: 0, min_order_cents: null, active: true, fee_pending: true };
+  const r = await db.query(
+    `INSERT INTO neighborhoods (store_id, name, city, fee_cents, fee_pending, sort_order)
+     VALUES ($1,$2,$3,0,true,(SELECT coalesce(max(sort_order),0)+10 FROM neighborhoods WHERE store_id = $1))
+     ON CONFLICT (store_id, lower(name), lower(city)) DO UPDATE SET name = neighborhoods.name
+     RETURNING *`,
+    [storeId, name, city],
+  );
+  return r.rows[0];
+}
+
 // Prévia usada pelo carrinho (mesma regra do pedido, sem gravar nada).
-export async function quote(db: Db, storeId: string, items: CreateOrderInput['items'], neighborhoodId: string | null) {
+export async function quote(db: Db, storeId: string, items: CreateOrderInput['items'], hoodRef: HoodRef | null) {
   const priced = await priceItems(db, storeId, items);
   const settings = await getSettings(db, storeId);
   const subtotal = priced.reduce((s, i) => s + i.lineTotalCents, 0);
   let fee: number | null = null;
+  let feePending = false;
   let minOrder = settings.min_order_cents as number;
-  if (neighborhoodId) {
-    const n = await db.query('SELECT * FROM neighborhoods WHERE id = $1 AND store_id = $2 AND active', [neighborhoodId, storeId]);
-    if (!n.rows[0]) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
-    fee = n.rows[0].fee_cents;
-    if (n.rows[0].min_order_cents != null) minOrder = Math.max(minOrder, n.rows[0].min_order_cents);
+  if (hoodRef && (hoodRef.id || hoodRef.name)) {
+    const n = await resolveHood(db, storeId, settings, hoodRef, false);
+    if (!n || !n.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
+    feePending = !!n.fee_pending;
+    fee = feePending ? 0 : n.fee_cents;
+    if (n.min_order_cents != null) minOrder = Math.max(minOrder, n.min_order_cents);
   }
   const savings = priced.reduce((s, i) => s + (i.regularPriceCents - i.unitPriceCents) * i.quantity, 0);
   return {
     items: priced.map(({ trackStock, ...i }) => i),
     subtotalCents: subtotal,
     deliveryFeeCents: fee,
+    deliveryFeePending: feePending,
     discountCents: 0,
     totalCents: fee == null ? null : subtotal + fee,
     promoSavingsCents: savings,
@@ -194,15 +227,16 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
       const methodEnabled = { cash: settings.accepts_cash, pix: settings.accepts_pix, card: settings.accepts_card }[input.payment.method];
       if (!methodEnabled) throw badRequest('payment_not_accepted', 'Forma de pagamento não aceita no momento.', { field: 'payment.method' });
 
-      const n = await db.query('SELECT * FROM neighborhoods WHERE id = $1 AND store_id = $2', [input.address.neighborhoodId, storeId]);
-      const hood = n.rows[0];
+      const hood = await resolveHood(db, storeId, settings, { id: input.address.neighborhoodId, name: input.address.neighborhoodName, city: input.address.city }, true);
       if (!hood || !hood.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.', { field: 'address.neighborhoodId' });
 
       const priced = await priceItems(db, storeId, input.items);
       const subtotal = priced.reduce((s, i) => s + i.lineTotalCents, 0);
       const minOrder = Math.max(settings.min_order_cents, hood.min_order_cents ?? 0);
       if (subtotal < minOrder) throw badRequest('below_minimum', `O pedido mínimo é de R$ ${(minOrder / 100).toFixed(2).replace('.', ',')}.`);
-      const fee = hood.fee_cents as number;
+      // Bairro novo (criado pelo CEP) sem taxa definida: o pedido entra com a taxa "a combinar".
+      const feePending = !!hood.fee_pending;
+      const fee = feePending ? 0 : (hood.fee_cents as number);
       const discount = 0;
       const total = subtotal + fee - discount;
 
@@ -231,14 +265,14 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
       const o = await db.query(
         `INSERT INTO orders (store_id, number, public_token, idempotency_key, request_hash, customer_name, customer_phone, cep, street,
             street_number, complement, reference, neighborhood_id, neighborhood_name, city, notes, payment_method, change_for_cents,
-            subtotal_cents, delivery_fee_cents, discount_cents, total_cents, customer_ip_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+            subtotal_cents, delivery_fee_cents, discount_cents, total_cents, customer_ip_hash, delivery_fee_pending)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
          RETURNING *`,
         [
           storeId, number, newToken(24), input.idempotencyKey, hash, cleanText(input.customer.name, 80), phone, cep,
           cleanText(input.address.street, 120), cleanText(input.address.number, 15), cleanText(input.address.complement, 80),
           cleanText(input.address.reference, 120), hood.id, hood.name, hood.city, cleanText(input.notes, 300),
-          input.payment.method, changeFor, subtotal, fee, discount, total, ipHash,
+          input.payment.method, changeFor, subtotal, fee, discount, total, ipHash, feePending,
         ],
       );
       const order = o.rows[0];

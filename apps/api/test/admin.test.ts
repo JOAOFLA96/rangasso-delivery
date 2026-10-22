@@ -105,6 +105,20 @@ describe('cardápio pelo painel', () => {
     expect(dup.json().error.code).toBe('duplicate_neighborhood');
   });
 
+  it('bairro criado pelo CEP sai do "taxa a definir" quando o gerente coloca a taxa', async () => {
+    await pool.query('UPDATE store_settings SET accept_unlisted_neighborhoods = true');
+    const addr = { cep: '', street: 'Rua B', number: '2', neighborhoodName: 'Jardim Novo', city: '' };
+    await app.inject({ method: 'POST', url: '/api/public/orders', payload: orderBody(f, { address: addr }) });
+    const h = await loginAs(app, 'gerente@t.local');
+    let hood = (await app.inject({ method: 'GET', url: '/api/admin/settings', headers: h })).json().neighborhoods.find((n: any) => n.name === 'Jardim Novo');
+    expect(hood).toMatchObject({ feePending: true, feeCents: 0 });
+    await app.inject({ method: 'PUT', url: `/api/admin/neighborhoods/${hood.id}`, headers: h, payload: { name: 'Jardim Novo', feeCents: 800, active: true } });
+    hood = (await app.inject({ method: 'GET', url: '/api/admin/settings', headers: h })).json().neighborhoods.find((n: any) => n.name === 'Jardim Novo');
+    expect(hood).toMatchObject({ feePending: false, feeCents: 800 });
+    const res = await app.inject({ method: 'POST', url: '/api/public/orders', payload: orderBody(f, { address: addr }) });
+    expect(res.json().totalCents).toBe(7000 + 800);
+  });
+
   it('horários e exceções', async () => {
     const h = await loginAs(app, 'gerente@t.local');
     await app.inject({ method: 'PUT', url: '/api/admin/settings/delivery', headers: h, payload: { minOrderCents: 0, etaMinMinutes: 30, etaMaxMinutes: 50, openMode: 'auto' } });

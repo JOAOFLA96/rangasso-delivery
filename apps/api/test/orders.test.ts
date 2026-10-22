@@ -161,3 +161,39 @@ describe('criação do pedido', () => {
     expect(res.json()).toMatchObject({ subtotalCents: 7000, deliveryFeeCents: 600, totalCents: 7600, belowMinimum: false });
   });
 });
+
+describe('bairro pelo CEP (fora da lista)', () => {
+  const unlisted = (name: string, city = 'São Paulo') => ({ cep: '01310-100', street: 'Avenida Paulista', number: '1000', neighborhoodName: name, city });
+
+  it('cria o bairro com taxa a definir e o pedido sai com taxa a combinar', async () => {
+    const q = await app.inject({ method: 'POST', url: '/api/public/quote', payload: { items: orderBody(f).items, neighborhoodName: 'Bela Vista', city: 'São Paulo' } });
+    expect(q.json()).toMatchObject({ deliveryFeeCents: 0, deliveryFeePending: true, totalCents: 7000 });
+    expect((await pool.query('SELECT count(*)::int c FROM neighborhoods')).rows[0].c).toBe(2); // a prévia não cria nada
+
+    const res = await post(orderBody(f, { address: unlisted('Bela Vista') }));
+    expect(res.statusCode).toBe(201);
+    const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [res.json().token])).rows[0];
+    expect(o).toMatchObject({ neighborhood_name: 'Bela Vista', delivery_fee_cents: 0, delivery_fee_pending: true, total_cents: 7000 });
+    const hood = (await pool.query(`SELECT * FROM neighborhoods WHERE name = 'Bela Vista'`)).rows[0];
+    expect(hood).toMatchObject({ fee_cents: 0, fee_pending: true, active: true, city: 'São Paulo' });
+    const status = await app.inject({ method: 'GET', url: `/api/public/orders/${res.json().token}` });
+    expect(status.json().deliveryFeePending).toBe(true);
+
+    // Segundo pedido do mesmo bairro (grafia diferente) reaproveita o cadastro.
+    expect((await post(orderBody(f, { address: unlisted('bela  vísta') }))).statusCode).toBe(201);
+    expect((await pool.query(`SELECT count(*)::int c FROM neighborhoods`)).rows[0].c).toBe(3);
+  });
+
+  it('nome que bate com bairro cadastrado usa a taxa dele', async () => {
+    const res = await post(orderBody(f, { address: unlisted('CENTRO', '') }));
+    const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [res.json().token])).rows[0];
+    expect(o).toMatchObject({ delivery_fee_cents: 600, delivery_fee_pending: false });
+  });
+
+  it('bairro desativado continua recusado, e a loja pode desligar a opção', async () => {
+    expect((await post(orderBody(f, { address: unlisted('Longe', '') }))).json().error.code).toBe('area_not_served');
+    await pool.query('UPDATE store_settings SET accept_unlisted_neighborhoods = false');
+    expect((await post(orderBody(f, { address: unlisted('Bela Vista') }))).json().error.code).toBe('area_not_served');
+    expect((await pool.query(`SELECT count(*)::int c FROM neighborhoods`)).rows[0].c).toBe(2);
+  });
+});

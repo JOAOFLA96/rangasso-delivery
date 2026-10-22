@@ -133,3 +133,29 @@ test('queda de conexão no envio não duplica o pedido ao reenviar', async ({ pa
   await expect(page.getByText(/Recebemos seu pedido/)).toBeVisible();
   expect(await orderCount()).toBe(before + 1);
 });
+
+test('CEP preenche rua e bairro; bairro fora da lista sai com taxa a combinar', async ({ page }) => {
+  await page.route('https://viacep.com.br/**', (r) =>
+    r.fulfill({ json: { cep: '01310-100', logradouro: 'Avenida do CEP', bairro: 'Jardim do CEP', localidade: 'São Paulo', uf: 'SP' } }));
+  await page.goto('/cardapio');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole('button', { name: /Batata frita/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /Adicionar/ }).click();
+  await page.getByRole('button', { name: /Ver carrinho/ }).click();
+  await page.getByRole('button', { name: 'Finalizar pedido' }).click();
+  await page.getByLabel('Nome').fill('Cliente CEP');
+  await page.getByLabel('Telefone (WhatsApp)').pressSequentially('11988887777');
+  await page.locator('#f-cep').pressSequentially('01310100');
+  await expect(page.locator('#f-street')).toHaveValue('Avenida do CEP');
+  await expect(page.locator('#f-neighborhoodId option:checked')).toHaveText(/Jardim do CEP.* — taxa a combinar/);
+  await expect(page.locator('.totals')).toContainText('a combinar');
+  await page.getByLabel('Número').fill('50');
+  await page.getByText('Pix').click();
+  await page.getByText(/Concordo com o uso/).click();
+  await page.getByRole('button', { name: /Enviar pedido/ }).click();
+  await expect(page).toHaveURL(/\/cardapio\/pedido\//);
+  await expect(page.locator('.totals')).toContainText('a combinar');
+  const hood = (await db.query(`SELECT fee_pending, fee_cents FROM neighborhoods WHERE name = 'Jardim do CEP'`)).rows[0];
+  expect(hood).toEqual({ fee_pending: true, fee_cents: 0 });
+});

@@ -35,6 +35,7 @@ const deliveryBody = z.object({
   etaMinMinutes: z.number().int().min(0).max(600),
   etaMaxMinutes: z.number().int().min(0).max(600),
   openMode: z.enum(['auto', 'force_open', 'force_closed']),
+  acceptUnlistedNeighborhoods: z.boolean().optional(),
 }).refine((b) => b.etaMaxMinutes >= b.etaMinMinutes, { path: ['etaMaxMinutes'], message: 'O tempo máximo precisa ser maior ou igual ao mínimo.' });
 
 const printerBody = z.object({
@@ -70,7 +71,7 @@ export function settingsDto(s: any) {
     pixKey: s.pix_key, pixInstructions: s.pix_instructions, openMode: s.open_mode, printerModel: s.printer_model,
     printerConnection: s.printer_connection, printerHost: s.printer_host, printerPort: s.printer_port,
     printerWindowsName: s.printer_windows_name, autoPrint: s.auto_print, printCopies: s.print_copies, paperColumns: s.paper_columns,
-    receiptFooter: s.receipt_footer, updatedAt: s.updated_at,
+    receiptFooter: s.receipt_footer, acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods, updatedAt: s.updated_at,
   };
 }
 
@@ -96,7 +97,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
       openState: await getOpenState(pool, storeId, s),
       hours: hours.rows,
       closures: closures.rows,
-      neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents, active: n.active })),
+      neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents, active: n.active, feePending: n.fee_pending })),
     };
   });
 
@@ -128,6 +129,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     const b = parse(deliveryBody, req.body);
     await updateSettings(req, 'delivery', {
       min_order_cents: b.minOrderCents, eta_min_minutes: b.etaMinMinutes, eta_max_minutes: b.etaMaxMinutes, open_mode: b.openMode,
+      ...(b.acceptUnlistedNeighborhoods === undefined ? {} : { accept_unlisted_neighborhoods: b.acceptUnlistedNeighborhoods }),
     });
     return { ok: true };
   });
@@ -215,7 +217,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
       const before = await db.query('SELECT name, fee_cents, min_order_cents, active FROM neighborhoods WHERE id = $1 AND store_id = $2', [id, req.admin!.storeId]);
       if (!before.rows[0]) throw notFound('Bairro');
       try {
-        await db.query('UPDATE neighborhoods SET name=$3, city=$4, fee_cents=$5, min_order_cents=$6, active=$7 WHERE id=$1 AND store_id=$2', [id, req.admin!.storeId, b.name, b.city, b.feeCents, b.minOrderCents, b.active]);
+        await db.query('UPDATE neighborhoods SET name=$3, city=$4, fee_cents=$5, min_order_cents=$6, active=$7, fee_pending=false WHERE id=$1 AND store_id=$2', [id, req.admin!.storeId, b.name, b.city, b.feeCents, b.minOrderCents, b.active]);
       } catch (e: any) {
         if (e.code === '23505') throw badRequest('duplicate_neighborhood', 'Já existe um bairro com esse nome.');
         throw e;

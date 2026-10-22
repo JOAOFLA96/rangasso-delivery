@@ -6,11 +6,13 @@ import { useCart } from './cart';
 import { CartLines } from './CartSheet';
 import { StoreHeader } from './Header';
 
-interface Quote { subtotalCents: number; deliveryFeeCents: number | null; discountCents: number; totalCents: number | null; promoSavingsCents: number; minOrderCents: number; belowMinimum: boolean }
-interface SavedCustomer { name: string; phone: string; cep: string; street: string; number: string; neighborhoodId: string; complement: string; reference: string }
+interface Quote { subtotalCents: number; deliveryFeeCents: number | null; deliveryFeePending?: boolean; discountCents: number; totalCents: number | null; promoSavingsCents: number; minOrderCents: number; belowMinimum: boolean }
+interface SavedCustomer { name: string; phone: string; cep: string; street: string; number: string; neighborhoodId: string; neighborhoodName?: string; city?: string; complement: string; reference: string }
 
 const SAVED_KEY = 'rangasso.customer.v1';
 const ORDERS_KEY = 'rangasso.orders.v1';
+// Valor do select para um bairro fora da lista (vem do CEP ou digitado); a taxa fica a combinar.
+const NEW_HOOD = '__new__';
 
 export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => Promise<void> }) {
   const { store } = data;
@@ -20,7 +22,10 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
 
   const [form, setForm] = useState({
     name: saved?.name ?? '', phone: saved?.phone ?? '', cep: saved?.cep ?? '', street: saved?.street ?? '', number: saved?.number ?? '',
-    neighborhoodId: saved?.neighborhoodId && store.neighborhoods.some((n) => n.id === saved.neighborhoodId) ? saved.neighborhoodId : '',
+    neighborhoodId: saved?.neighborhoodId && store.neighborhoods.some((n) => n.id === saved.neighborhoodId)
+      ? saved.neighborhoodId
+      : saved?.neighborhoodName && store.acceptUnlistedNeighborhoods ? NEW_HOOD : '',
+    neighborhoodName: saved?.neighborhoodName ?? '', city: saved?.city ?? '',
     complement: saved?.complement ?? '', reference: saved?.reference ?? '', notes: '',
     payment: '' as '' | 'cash' | 'pix' | 'card', needChange: false, changeFor: '', privacy: false, remember: true,
   });
@@ -40,10 +45,16 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
 
   const items = useMemo(() => cart.lines.map((l) => ({ productId: l.productId, quantity: l.quantity, notes: l.notes, addonIds: l.addonIds })), [cart.lines]);
 
+  const isNewHood = form.neighborhoodId === NEW_HOOD;
+  const newHoodName = isNewHood ? form.neighborhoodName.trim() : '';
+
   useEffect(() => {
     if (!items.length) return;
     const ctrl = new AbortController();
-    api<Quote>('/api/public/quote', { body: { items, neighborhoodId: form.neighborhoodId || null }, signal: ctrl.signal })
+    const hoodRef = isNewHood
+      ? { neighborhoodId: null, neighborhoodName: newHoodName.length >= 2 ? newHoodName : null, city: form.city || null }
+      : { neighborhoodId: form.neighborhoodId || null };
+    api<Quote>('/api/public/quote', { body: { items, ...hoodRef }, signal: ctrl.signal })
       .then((q) => {
         setQuote(q);
         setQuoteError(null);
@@ -54,9 +65,10 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
         setQuoteError({ message: e.message, productId: e.details?.productId });
       });
     return () => ctrl.abort();
-  }, [items, form.neighborhoodId]);
+  }, [items, form.neighborhoodId, isNewHood, newHoodName, form.city]);
 
-  // Busca de CEP no ViaCEP (serviço público). O bairro só é preenchido se estiver na nossa lista de atendidos.
+  // Busca de CEP no ViaCEP (serviço público): preenche rua e bairro. Bairro fora da lista entra com taxa a combinar
+  // (se a loja aceitar); a loja define a taxa depois no painel.
   useEffect(() => {
     const cep = digits(form.cep);
     if (cep.length !== 8) {
@@ -71,18 +83,24 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
           setCepInfo('CEP não encontrado. Preencha o endereço manualmente.');
           return;
         }
-        setForm((f) => ({ ...f, street: f.street || r.logradouro || '' }));
+        setForm((f) => ({ ...f, street: r.logradouro || f.street, city: r.localidade || f.city }));
+        setErrors((e) => ({ ...e, street: r.logradouro ? '' : e.street, neighborhoodId: '', neighborhoodName: '' }));
         const match = store.neighborhoods.find((n) => normalize(n.name) === normalize(r.bairro ?? ''));
         if (match) {
-          setForm((f) => ({ ...f, neighborhoodId: f.neighborhoodId || match.id }));
+          setForm((f) => ({ ...f, neighborhoodId: match.id, neighborhoodName: '' }));
+          setCepInfo(null);
+        } else if (r.bairro && store.acceptUnlistedNeighborhoods) {
+          setForm((f) => ({ ...f, neighborhoodId: NEW_HOOD, neighborhoodName: r.bairro }));
           setCepInfo(null);
         } else if (r.bairro) {
           setCepInfo(`O CEP indica o bairro "${r.bairro}", que não está na nossa lista. Selecione seu bairro abaixo; se ele não aparecer, ainda não entregamos aí.`);
+        } else {
+          setCepInfo('Esse CEP não informa o bairro. Selecione ou digite o bairro abaixo.');
         }
       })
       .catch(() => setCepInfo(null));
     return () => ctrl.abort();
-  }, [form.cep, store.neighborhoods]);
+  }, [form.cep, store.neighborhoods, store.acceptUnlistedNeighborhoods]);
 
   if (!cart.lines.length) {
     return (
@@ -108,6 +126,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     if (form.street.trim().length < 2) e.street = 'Informe a rua.';
     if (!form.number.trim()) e.number = 'Informe o número (ou "s/n").';
     if (!form.neighborhoodId) e.neighborhoodId = 'Selecione o bairro.';
+    else if (isNewHood && newHoodName.length < 2) e.neighborhoodName = 'Digite o nome do bairro.';
     if (!form.payment) e.payment = 'Escolha a forma de pagamento.';
     if (form.payment === 'cash' && form.needChange) {
       const c = moneyToCents(form.changeFor);
@@ -128,7 +147,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     if (!validate()) return;
     const payload = {
       customer: { name: form.name.trim(), phone: form.phone },
-      address: { cep: form.cep, street: form.street.trim(), number: form.number.trim(), neighborhoodId: form.neighborhoodId, complement: form.complement.trim(), reference: form.reference.trim() },
+      address: { cep: form.cep, street: form.street.trim(), number: form.number.trim(), ...(isNewHood ? { neighborhoodName: newHoodName, city: form.city } : { neighborhoodId: form.neighborhoodId }), complement: form.complement.trim(), reference: form.reference.trim() },
       notes: form.notes.trim(),
       payment: { method: form.payment, changeForCents: form.payment === 'cash' && form.needChange ? moneyToCents(form.changeFor) : null },
       items,
@@ -142,7 +161,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       const res = await api<{ number: number; token: string }>('/api/public/orders', { body: { idempotencyKey: key, ...payload } });
       attempt.current = null;
       if (form.remember) {
-        storage.set(SAVED_KEY, { name: form.name, phone: form.phone, cep: form.cep, street: form.street, number: form.number, neighborhoodId: form.neighborhoodId, complement: form.complement, reference: form.reference });
+        storage.set(SAVED_KEY, { name: form.name, phone: form.phone, cep: form.cep, street: form.street, number: form.number, neighborhoodId: isNewHood ? '' : form.neighborhoodId, neighborhoodName: isNewHood ? newHoodName : '', city: form.city, complement: form.complement, reference: form.reference });
       } else {
         storage.set(SAVED_KEY, null);
       }
@@ -154,7 +173,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       if (err.code !== 'network' && err.status < 500) attempt.current = null; // recusado: nada foi criado
       if (err.code === 'idempotency_mismatch') attempt.current = null;
       if (err.code === 'store_closed') reload();
-      const field = err.details?.field?.replace('customer.', '').replace('address.', '').replace('payment.method', 'payment').replace('payment.changeForCents', 'changeFor');
+      const field = err.details?.field?.replace('customer.', '').replace('address.', '').replace(/^neighborhoodName$/, isNewHood ? 'neighborhoodName' : 'neighborhoodId').replace('payment.method', 'payment').replace('payment.changeForCents', 'changeFor');
       if (field) setErrors((x) => ({ ...x, [field]: err.message }));
       setSubmitError(err.code === 'network' ? 'A conexão caiu durante o envio. Toque em "Enviar pedido" de novo: se o pedido já tiver chegado, ele não será duplicado.' : err.message);
     } finally {
@@ -163,6 +182,8 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   }
 
   const hood = store.neighborhoods.find((n) => n.id === form.neighborhoodId);
+  const hoodLabel = hood?.name ?? (newHoodName || null);
+  const feePending = !!quote?.deliveryFeePending;
   const Err = ({ k }: { k: string }) => (errors[k] ? <span className="field-error" role="alert">{errors[k]}</span> : null);
 
   return (
@@ -216,12 +237,26 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
               <select id="f-neighborhoodId" value={form.neighborhoodId} onChange={(e) => set('neighborhoodId', e.target.value)} aria-invalid={!!errors.neighborhoodId}>
                 <option value="">Selecione o bairro</option>
                 {store.neighborhoods.map((n) => (
-                  <option key={n.id} value={n.id}>{n.name}{n.city ? ` (${n.city})` : ''} — taxa {brl(n.feeCents)}</option>
+                  <option key={n.id} value={n.id}>{n.name}{n.city ? ` (${n.city})` : ''} — {n.feePending ? 'taxa a combinar' : `taxa ${brl(n.feeCents)}`}</option>
                 ))}
+                {store.acceptUnlistedNeighborhoods && (
+                  <option value={NEW_HOOD}>{isNewHood && newHoodName ? `${newHoodName} — taxa a combinar` : 'Outro bairro (digitar)'}</option>
+                )}
               </select>
               <Err k="neighborhoodId" />
-              <span className="hint">Seu bairro não está na lista? Ainda não entregamos aí{store.phone ? `. Dúvidas: ${store.phone}` : ''}.</span>
+              {store.acceptUnlistedNeighborhoods ? (
+                <span className="hint">Digite o CEP e o endereço é preenchido sozinho. Se o seu bairro não estiver na lista, a taxa de entrega é combinada com a loja.</span>
+              ) : (
+                <span className="hint">Seu bairro não está na lista? Ainda não entregamos aí{store.phone ? `. Dúvidas: ${store.phone}` : ''}.</span>
+              )}
             </label>
+            {isNewHood && (
+              <label className="field">
+                <span>Nome do bairro</span>
+                <input id="f-neighborhoodName" value={form.neighborhoodName} onChange={(e) => set('neighborhoodName', e.target.value)} maxLength={80} aria-invalid={!!errors.neighborhoodName} />
+                <Err k="neighborhoodName" />
+              </label>
+            )}
             <label className="field">
               <span>Ponto de referência <em className="muted">(opcional)</em></span>
               <input id="f-reference" value={form.reference} onChange={(e) => set('reference', e.target.value)} maxLength={120} />
@@ -275,10 +310,11 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
             ) : (
               <div className="totals">
                 <div><span>Subtotal</span><span>{brl(quote?.subtotalCents)}</span></div>
-                <div><span>Taxa de entrega{hood ? ` (${hood.name})` : ''}</span><span>{quote?.deliveryFeeCents == null ? 'selecione o bairro' : brl(quote.deliveryFeeCents)}</span></div>
+                <div><span>Taxa de entrega{hoodLabel ? ` (${hoodLabel})` : ''}</span><span>{feePending ? 'a combinar' : quote?.deliveryFeeCents == null ? 'selecione o bairro' : brl(quote.deliveryFeeCents)}</span></div>
                 {quote && quote.discountCents > 0 && <div><span>Desconto</span><span>− {brl(quote.discountCents)}</span></div>}
                 {quote && quote.promoSavingsCents > 0 && <div className="muted small"><span>Você economizou com promoções</span><span>{brl(quote.promoSavingsCents)}</span></div>}
-                <div className="total"><span>Total</span><strong>{quote?.totalCents == null ? '—' : brl(quote.totalCents)}</strong></div>
+                <div className="total"><span>{feePending ? 'Total (sem a taxa)' : 'Total'}</span><strong>{quote?.totalCents == null ? '—' : brl(quote.totalCents)}</strong></div>
+                {feePending && <p className="hint">A taxa de entrega do seu bairro ainda vai ser informada pela loja.</p>}
                 {quote?.belowMinimum && <p className="alert alert-info">Pedido mínimo: {brl(quote.minOrderCents)}.</p>}
               </div>
             )}

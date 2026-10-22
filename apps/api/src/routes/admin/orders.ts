@@ -49,7 +49,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     params.push(q.limit, q.offset);
     const rows = await pool.query(
       `SELECT o.id, o.number, o.status, o.print_status, o.customer_name, o.customer_phone, o.neighborhood_name, o.street, o.street_number,
-              o.complement, o.payment_method, o.change_for_cents, o.subtotal_cents, o.delivery_fee_cents, o.discount_cents, o.total_cents,
+              o.complement, o.payment_method, o.change_for_cents, o.subtotal_cents, o.delivery_fee_cents, o.delivery_fee_pending, o.discount_cents, o.total_cents,
               o.created_at, o.updated_at, o.notes,
               (SELECT coalesce(sum(quantity),0)::int FROM order_items WHERE order_id = o.id) AS item_count,
               count(*) OVER()::int AS total_count
