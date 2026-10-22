@@ -1,5 +1,6 @@
 // Servidor falso usado só no teste de fumaça do Windows: responde como o sistema Rangasso e oferece
-// uma "versão nova" do agente (o próprio agent.cjs instalado com a versão trocada).
+// uma "versão nova" do agente (o próprio agent.cjs instalado com a versão trocada). Escuta em todas as
+// interfaces: no Windows, "localhost" resolve primeiro para ::1 (IPv6).
 const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -18,4 +19,4 @@ http.createServer((req, res) => {
   if (url === '/api/agent/update') return json(res, { version: newVersion, sha256, size: bundle.length });
   if (url === '/api/agent/update/agent.cjs') { res.writeHead(200, { 'content-type': 'application/javascript' }); return res.end(bundle); }
   res.writeHead(404); res.end('{}');
-}).listen(Number(port), '127.0.0.1', () => console.log(`servidor falso em ${port}, oferecendo ${newVersion}`));
+}).listen(Number(port), () => console.log(`servidor falso em ${port}, oferecendo ${newVersion}`));

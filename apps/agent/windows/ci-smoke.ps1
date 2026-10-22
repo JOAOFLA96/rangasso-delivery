@@ -81,7 +81,7 @@ Check (($null -ne $pidAfter) -and ($pidAfter -ne $pidBefore)) "serviço reinicio
 # o serviço sobe de novo e o agent.cjs instalado carrega a versão baixada.
 $installedVersion = (& $cmd version | Out-String).Trim()
 $newVersion = "9.9.9"
-$fake = Start-Process -FilePath (Join-Path $app "node\node.exe") -ArgumentList "`"$PSScriptRoot\ci-fake-server.js`"", "`"$app\agent.cjs`"", $installedVersion, $newVersion, "3999" -PassThru -RedirectStandardOutput "$outDir\fake-server.log" -RedirectStandardError "$outDir\fake-server.err"
+$fake = Start-Process -FilePath (Join-Path $app "node\node.exe") -ArgumentList "`"$PSScriptRoot\ci-fake-server.cjs`"", "`"$app\agent.cjs`"", $installedVersion, $newVersion, "3999" -PassThru -RedirectStandardOutput "$outDir\fake-server.log" -RedirectStandardError "$outDir\fake-server.err"
 $xmlPath = Join-Path $app "RangassoAgent.xml"
 (Get-Content $xmlPath -Raw) -replace "</service>", "  <env name=`"RANGASSO_UPDATE_FIRST_MS`" value=`"5000`"/>`r`n</service>" | Set-Content -Encoding UTF8 $xmlPath
 Restart-Service RangassoAgent
@@ -93,6 +93,7 @@ while ((Get-Date) -lt $deadline -and -not $loaded) {
   $loaded = $all -match "Agente Rangasso $([regex]::Escape($newVersion)) iniciando"
 }
 Get-Content "$outDir\fake-server.log" -ErrorAction SilentlyContinue | Select-Object -Last 15 | Write-Host
+Get-Content "$outDir\fake-server.err" -ErrorAction SilentlyContinue | Select-Object -Last 15 | Write-Host
 Check ($all -match "Atualização $([regex]::Escape($newVersion)) baixada") "agente $installedVersion baixou a atualização $newVersion"
 Check $loaded "serviço reiniciou e passou a rodar a versão $newVersion"
 Start-Sleep -Seconds 20
