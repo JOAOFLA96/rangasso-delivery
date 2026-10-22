@@ -6,6 +6,7 @@ import { AppError } from '../lib/errors.js';
 import { sha256 } from '../lib/security.js';
 import { parse } from '../lib/validate.js';
 import { claimJobs, recoverExpiredLeases, reportJob } from '../services/print.js';
+import { agentBundle } from '../services/agentBundle.js';
 
 declare module 'fastify' {
   interface FastifyRequest { device?: { id: string; storeId: string; name: string } }
@@ -40,6 +41,19 @@ const heartbeatBody = z.object({
 
 export async function agentRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authDevice);
+
+  // Atualização automática: o agente pergunta a versão publicada junto com este servidor e baixa o agent.cjs.
+  app.get('/update', async () => {
+    const b = await agentBundle();
+    return b ? { version: b.version, sha256: b.sha256, size: b.size } : { version: null };
+  });
+
+  app.get('/update/agent.cjs', async (_req, reply) => {
+    const b = await agentBundle();
+    if (!b) throw new AppError(404, 'not_found', 'Nenhuma versão do agente publicada neste servidor.');
+    reply.header('content-type', 'application/javascript; charset=utf-8').header('cache-control', 'no-store').header('x-agent-sha256', b.sha256);
+    return reply.send(b.content);
+  });
 
   app.post('/heartbeat', async (req) => {
     const b = parse(heartbeatBody, req.body);

@@ -50,6 +50,27 @@ export class AgentApi {
     return this.req<{ jobs: ServerJob[] }>('GET', `/api/agent/jobs?wait=${waitSeconds}`, undefined, (waitSeconds + 15) * 1000);
   }
 
+  updateInfo() {
+    return this.req<{ version: string | null; sha256?: string; size?: number }>('GET', '/api/agent/update');
+  }
+
+  async downloadUpdate(): Promise<Buffer> {
+    const ctrl = new AbortController();
+    this.inflight.add(ctrl);
+    const t = setTimeout(() => ctrl.abort(), 120_000);
+    try {
+      const res = await fetch(this.baseUrl + '/api/agent/update/agent.cjs', {
+        headers: { authorization: `Bearer ${this.token}`, 'user-agent': `RangassoAgent/${this.version}` },
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new ApiError(res.status, `http_${res.status}`, `Download da atualização falhou (HTTP ${res.status})`);
+      return Buffer.from(await res.arrayBuffer());
+    } finally {
+      clearTimeout(t);
+      this.inflight.delete(ctrl);
+    }
+  }
+
   report(jobId: string, status: string, detail: string) {
     return this.req<{ ok: boolean; status: string }>('POST', `/api/agent/jobs/${jobId}/status`, { status, detail: detail.slice(0, 500) });
   }

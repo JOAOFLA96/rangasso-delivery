@@ -10,7 +10,8 @@ COPY apps/agent/package.json apps/agent/
 RUN npm ci --no-audit --no-fund
 COPY apps/api apps/api
 COPY apps/web apps/web
-RUN npm -w apps/api run build && npm -w apps/web run build
+COPY apps/agent apps/agent
+RUN npm -w apps/api run build && npm -w apps/web run build && npm -w apps/agent run build
 
 FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
@@ -26,6 +27,7 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     WEB_DIST_DIR=/app/web \
     UPLOAD_DIR=/data/uploads \
+    AGENT_BUNDLE_DIR=/app/agent \
     TRUST_PROXY=true
 WORKDIR /app/api
 COPY --from=deps /app/node_modules /app/node_modules
@@ -34,7 +36,9 @@ COPY --from=build /src/apps/api/package.json ./package.json
 COPY --from=build /src/apps/api/dist ./dist
 COPY --from=build /src/apps/api/migrations ./migrations
 COPY --from=build /src/apps/web/dist /app/web
-RUN chmod -R a+rX /app/web /app/api && mkdir -p /data/uploads && chown -R node:node /data
+# Agente para a atualização automática dos computadores da loja.
+COPY --from=build /src/apps/agent/build/agent.cjs /src/apps/agent/build/agent-version.json /app/agent/
+RUN chmod -R a+rX /app/web /app/api /app/agent && mkdir -p /data/uploads && chown -R node:node /data
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

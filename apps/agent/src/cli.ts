@@ -8,6 +8,11 @@ import { Logger } from './logger.js';
 import { MONITOR_PORT, startMonitor, type MonitorHost, type MonitorSetup } from './monitor.js';
 import { listWindowsPrinters } from './printers/windows.js';
 import { renderEscPos, renderText, type ReceiptPayload } from './receipt.js';
+import { downloadUpdate, markHealthy, pickUpdate } from './updater.js';
+
+const UPDATE_FIRST_CHECK_MS = Number(process.env.RANGASSO_UPDATE_FIRST_MS ?? 2 * 60_000);
+const UPDATE_EVERY_MS = 6 * 3600_000;
+export const RESTART_FOR_UPDATE_EXIT_CODE = 3;
 
 const HELP = `Agente de impressão Rangasso ${AGENT_VERSION}
 
@@ -136,6 +141,34 @@ async function runService(configPath: string, flags: Record<string, string>) {
   process.on('SIGTERM', stop);
   process.on('SIGBREAK' as NodeJS.Signals, stop);
 
+  // Atualização automática: a versão em uso confirma que funciona assim que conecta; de tempos em tempos
+  // pergunta ao servidor se há versão nova, baixa e reinicia o serviço (o Windows o sobe de novo em 10 s).
+  let restartForUpdate = false;
+  const autoUpdate = process.env.RANGASSO_NO_AUTO_UPDATE !== '1';
+  const healthTimer = setInterval(() => {
+    if (cfg && agent?.connection.ok) markHealthy(cfg.dataDir, AGENT_VERSION);
+  }, 15_000);
+  healthTimer.unref();
+  const checkUpdate = async () => {
+    if (!autoUpdate || !cfg || stopping || !agent?.connection.ok) return;
+    if (!/^https:\/\//.test(cfg.serverUrl) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cfg.serverUrl)) return;
+    const api = new AgentApi(cfg.serverUrl, cfg.deviceToken, AGENT_VERSION);
+    try {
+      const v = await downloadUpdate({ latest: () => api.updateInfo(), download: () => api.downloadUpdate() }, cfg.dataDir, AGENT_VERSION);
+      if (v && !stopping) {
+        baseLog().info(`Atualização ${v} baixada (versão atual ${AGENT_VERSION}). Reiniciando o serviço para aplicar.`);
+        restartForUpdate = true;
+        stop();
+      }
+    } catch (e) {
+      baseLog().warn('Não foi possível verificar atualização do agente.', e);
+    }
+  };
+  const firstCheck = setTimeout(() => void checkUpdate(), UPDATE_FIRST_CHECK_MS);
+  const updateTimer = setInterval(() => void checkUpdate(), UPDATE_EVERY_MS);
+  firstCheck.unref();
+  updateTimer.unref();
+
   let monitor: Awaited<ReturnType<typeof startMonitor>> | null = null;
   if (flags['no-monitor'] !== 'true') {
     const port = Number(flags['monitor-port'] ?? process.env.RANGASSO_MONITOR_PORT ?? MONITOR_PORT);
@@ -171,7 +204,11 @@ async function runService(configPath: string, flags: Record<string, string>) {
     agent = new Agent(cfg, new Logger(cfg.dataDir, cfg.logLevel, true));
     await agent.run();
   }
+  clearInterval(healthTimer);
+  clearInterval(updateTimer);
+  clearTimeout(firstCheck);
   monitor?.close();
+  if (restartForUpdate) process.exit(RESTART_FOR_UPDATE_EXIT_CODE);
 }
 
 async function main() {
@@ -271,7 +308,31 @@ async function main() {
   process.exitCode = 2;
 }
 
-main().catch((e) => {
-  console.error(`Erro: ${(e as Error).message}`);
-  process.exitCode = 1;
-});
+// Serviço com atualização baixada: carrega a versão nova (que roda o próprio main) em vez desta.
+function loadDownloadedUpdate(): boolean {
+  const { flags, rest } = args(process.argv.slice(2));
+  if (rest[0] !== 'run' || process.env.RANGASSO_UPDATE_LOADED || process.env.RANGASSO_NO_AUTO_UPDATE === '1') return false;
+  let dataDir = defaultDataDir();
+  try {
+    dataDir = loadConfig(flags.config ? path.resolve(flags.config) : defaultConfigPath()).dataDir;
+  } catch {
+    // sem configuração: usa a pasta padrão
+  }
+  try {
+    const file = pickUpdate(dataDir, AGENT_VERSION);
+    if (!file) return false;
+    process.env.RANGASSO_UPDATE_LOADED = AGENT_VERSION;
+    require(file);
+    return true;
+  } catch (e) {
+    console.error(`Atualização baixada não carregou; usando a versão instalada ${AGENT_VERSION}: ${(e as Error).message}`);
+    return false;
+  }
+}
+
+if (!loadDownloadedUpdate()) {
+  main().catch((e) => {
+    console.error(`Erro: ${(e as Error).message}`);
+    process.exitCode = 1;
+  });
+}

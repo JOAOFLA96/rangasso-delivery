@@ -20,6 +20,8 @@ const schema = z.object({
   GLOBAL_RATE_LIMIT: z.coerce.number().int().positive().default(300),
   LOGIN_RATE_LIMIT: z.coerce.number().int().positive().default(10),
   // Serviço de mapas para achar o endereço do cliente na taxa por km (padrão: Nominatim/OpenStreetMap, gratuito, 1 consulta/s).
+  // Pasta com o agent.cjs e agent-version.json gerados pelo build do agente (atualização automática dos agentes).
+  AGENT_BUNDLE_DIR: z.string().default('../agent/build'),
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
 });
 
