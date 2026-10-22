@@ -107,8 +107,42 @@ describe('taxa por km', () => {
 
   it('endereço da loja numa linha: tenta sem o bairro', async () => {
     const tried: string[] = [];
-    setGeocoder(async (q) => { tried.push(q.q ?? q.postalcode); return null; });
+    setGeocoder(async (q) => { tried.push(`${q.provider}: ${q.q ?? q.cep}`); return null; });
     expect(await geocodeText(pool, 'Av. Itororó, 681 - Cidade Nova I, Indaiatuba - SP, 13334-050')).toBeNull();
-    expect(tried).toEqual(['Avenida Itororó, 681 - Cidade Nova I, Indaiatuba - SP', 'Avenida Itororó, 681, Indaiatuba - SP', '13334-050']);
+    expect(tried).toEqual([
+      'nominatim: Avenida Itororó, 681 - Cidade Nova I, Indaiatuba - SP',
+      'nominatim: Avenida Itororó, 681, Indaiatuba - SP',
+      'photon: Avenida Itororó, 681, Indaiatuba SP',
+      'cep: 13334050',
+    ]);
+  });
+
+  it('se o mapa não acha a rua, usa a coordenada do CEP; um serviço fora do ar não impede os outros', async () => {
+    setGeocoder(async (q) => {
+      if (q.provider === 'nominatim') throw new Error('respondeu 403');
+      if (q.provider === 'cep' && q.cep === '13334050') return { lat: -23.073, lng: -47.2, label: 'CEP' }; // ~3 km
+      return null;
+    });
+    const res = await post(orderBody(f, { address: addr('Rua Desconhecida') }));
+    const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [res.json().token])).rows[0];
+    expect(o).toMatchObject({ delivery_fee_cents: 800, delivery_fee_source: 'distance' });
+  });
+
+  it('painel testa um endereço e mostra cada tentativa', async () => {
+    const h = await loginAs(app, 'gerente@t.local');
+    setGeocoder(async (q) => (q.provider === 'photon' && q.q.includes('Rua Perto') ? { ...PLACES['Rua Perto'], label: 'Rua Perto, Indaiatuba' } : null));
+    const r = (await app.inject({ method: 'POST', url: '/api/admin/settings/test-address', headers: h, payload: { street: 'Rua Perto', number: '10', city: 'Indaiatuba', state: 'SP', cep: '' } })).json();
+    expect(r).toMatchObject({ found: { provider: 'photon', label: 'Rua Perto, Indaiatuba' }, feeCents: 500, outOfArea: false });
+    expect(r.distanceKm).toBeCloseTo(1.0, 1);
+    expect(r.trace.map((t: any) => `${t.provider} ${t.result}`)).toEqual(['nominatim não achou', 'nominatim não achou', 'photon achou']);
+    const staff = await loginAs(app, 'atendente@t.local');
+    expect((await app.inject({ method: 'POST', url: '/api/admin/settings/test-address', headers: staff, payload: { street: 'Rua Perto', city: 'Indaiatuba' } })).statusCode).toBe(403);
+  });
+
+  it('salvar a taxa por km guarda o endereço da loja', async () => {
+    const h = await loginAs(app, 'gerente@t.local');
+    const address = 'Av. Itororó, 681 - Cidade Nova I, Indaiatuba - SP, 13334-050';
+    await app.inject({ method: 'PUT', url: '/api/admin/settings/distance', headers: h, payload: { mode: 'distance', storeLat: -23.1, storeLng: -47.2, tiers: [{ maxKm: 3, feeCents: 600 }], address } });
+    expect((await app.inject({ method: 'GET', url: '/api/public/store' })).json().address).toBe(address);
   });
 });

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, brl, formatDateTime } from '../lib/api';
 import { StoreHeader } from './Header';
-import { enablePush, fetchOrder, iosNeedsHomeScreen, isActive, myOrders, pushEnabledFor, pushSupported, rememberOrder, type PublicOrder } from './orderStore';
+import { enablePush, fetchOrder, iosNeedsHomeScreen, isActive, myOrders, PUSH_EVENT, pushEnabledFor, pushSupported, rememberOrder, type PublicOrder } from './orderStore';
 import type { StoreInfo } from './types';
 
 const STEPS = [
@@ -116,6 +116,12 @@ function PushCard({ token }: { token: string }) {
   const [on, setOn] = useState(() => pushEnabledFor(token));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Os avisos podem ter sido ligados ao enviar o pedido (a inscrição termina depois que esta tela abre).
+  useEffect(() => {
+    const check = () => setOn(pushEnabledFor(token));
+    window.addEventListener(PUSH_EVENT, check);
+    return () => window.removeEventListener(PUSH_EVENT, check);
+  }, [token]);
   if (on) return <p className="alert alert-ok small" role="status">🔔 Avisos ativados: você recebe uma notificação quando o pedido for aceito e quando sair para entrega.</p>;
   if (!pushSupported()) {
     return iosNeedsHomeScreen() ? (

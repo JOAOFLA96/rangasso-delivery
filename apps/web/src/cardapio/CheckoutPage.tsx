@@ -5,7 +5,7 @@ import type { MenuData } from './CardapioApp';
 import { useCart } from './cart';
 import { CartLines } from './CartSheet';
 import { StoreHeader } from './Header';
-import { rememberOrder } from './orderStore';
+import { enablePush, pushSupported, rememberOrder } from './orderStore';
 
 interface Quote { subtotalCents: number; deliveryFeeCents: number | null; deliveryFeePending?: boolean; deliveryDistanceKm?: number | null; discountCents: number; totalCents: number | null; promoSavingsCents: number; minOrderCents: number; belowMinimum: boolean }
 interface SavedCustomer { name: string; phone: string; cep: string; street: string; number: string; neighborhoodId: string; neighborhoodName?: string; city?: string; state?: string; complement: string; reference: string }
@@ -31,6 +31,8 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [quote, setQuote] = useState<Quote | null>(null);
+  const canPush = useMemo(() => pushSupported() && Notification.permission !== 'denied', []);
+  const [notify, setNotify] = useState(true);
   const [quoteError, setQuoteError] = useState<{ message: string; productId?: string } | null>(null);
   const [cepInfo, setCepInfo] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -154,6 +156,11 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     if (submitting) return;
     setSubmitError(null);
     if (!validate()) return;
+    // O pedido de permissão precisa sair do toque em "Enviar pedido" (o navegador bloqueia se vier depois, sozinho).
+    let permission: Promise<NotificationPermission> | null = null;
+    if (canPush && notify) {
+      try { permission = Promise.resolve(Notification.requestPermission()); } catch { permission = null; }
+    }
     const payload = {
       customer: { name: form.name.trim(), phone: form.phone },
       address: { cep: form.cep, street: form.street.trim(), number: form.number.trim(), ...(isNewHood ? { neighborhoodName: newHoodName } : { neighborhoodId: form.neighborhoodId }), city: form.city.trim(), state: form.state, complement: form.complement.trim(), reference: form.reference.trim() },
@@ -175,6 +182,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
         storage.set(SAVED_KEY, null);
       }
       rememberOrder({ token: res.token, number: res.number, at: new Date().toISOString() });
+      permission?.then((p) => (p === 'granted' ? enablePush(res.token) : undefined)).catch(() => undefined);
       cart.clear();
       navigate(`/cardapio/pedido/${res.token}`, { replace: true });
     } catch (e) {
@@ -345,6 +353,12 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
             <input type="checkbox" checked={form.remember} onChange={(e) => set('remember', e.target.checked)} />
             <span>Lembrar meus dados neste aparelho</span>
           </label>
+          {canPush && (
+            <label className="check">
+              <input id="f-notify" type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />
+              <span>🔔 Avisar no celular quando o pedido for aceito e quando sair para entrega</span>
+            </label>
+          )}
 
           {submitError && <div className="alert alert-error" role="alert">{submitError}</div>}
 
