@@ -1,0 +1,14 @@
+{
+  "serverUrl": "https://delivery.SEU-DOMINIO.com.br",
+  "deviceToken": "COLE_AQUI_A_CHAVE_DO_AGENTE_CRIADA_NO_PAINEL",
+  "printer": {
+    "mode": "auto",
+    "windowsName": "",
+    "host": "",
+    "port": 9100,
+    "columns": 0,
+    "outputDir": ""
+  },
+  "dataDir": "",
+  "logLevel": "info"
+}

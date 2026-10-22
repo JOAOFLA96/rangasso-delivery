@@ -7,3 +7,8 @@ apps/agent/build/
 apps/agent/data/
 test-results/
 playwright-report/
+apps/agent/build/
+apps/agent/dist/
+apps/agent/.cache/
+apps/agent/config.json
+apps/agent/data/

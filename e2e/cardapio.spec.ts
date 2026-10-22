@@ -8,13 +8,12 @@ async function noHorizontalScroll(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await db.query(`UPDATE store_settings SET open_mode = 'force_open', min_order_cents = 0`);
+  // Produtos com estoque controlado são consumidos a cada execução; repõe para o teste não depender do histórico.
+  await db.query(`UPDATE products SET stock_qty = 500 WHERE track_stock AND available AND name NOT LIKE 'Lanche esgotado%'`);
   // Bloqueia o ViaCEP nos testes para não depender de rede externa.
   await page.route('https://viacep.com.br/**', (r) => r.fulfill({ json: { erro: true } }));
 });
 
-test.afterAll(async () => {
-  await db.end();
-});
 
 test('cardápio carrega, sem rolagem horizontal, com indisponível bloqueado', async ({ page }) => {
   await page.goto('/cardapio');

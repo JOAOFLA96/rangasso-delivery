@@ -17,6 +17,7 @@ const schema = z.object({
   LOG_LEVEL: z.string().default('info'),
   // Limite de pedidos por IP a cada 5 minutos. Operadoras móveis compartilham IP (CGNAT), então não deixar baixo demais.
   ORDER_RATE_LIMIT: z.coerce.number().int().positive().default(30),
+  GLOBAL_RATE_LIMIT: z.coerce.number().int().positive().default(300),
   LOGIN_RATE_LIMIT: z.coerce.number().int().positive().default(10),
 });
 
