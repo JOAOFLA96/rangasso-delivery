@@ -51,6 +51,8 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
   await app.register(multipart);
 
   app.setErrorHandler((err: FastifyError | AppError, req, reply) => {
+    // O erro pode surgir depois que outro tipo (ex.: imagem) já foi definido na resposta.
+    reply.type('application/json; charset=utf-8');
     if (err instanceof AppError) {
       return reply.code(err.statusCode).send({ error: { code: err.code, message: err.message, details: err.details } });
     }
