@@ -41,6 +41,34 @@ jobs:
         env:
           INTEGRATION_DATABASE_URL: postgres://rangasso:ci_only_password@localhost:5432/rangasso_integ
         run: npm -w apps/agent run test:integration
+      - name: Testes de navegador (cardápio e painel, 4 perfis de tela)
+        env:
+          DATABASE_URL: postgres://rangasso:ci_only_password@localhost:5432/rangasso_e2e
+          E2E_DATABASE_URL: postgres://rangasso:ci_only_password@localhost:5432/rangasso_e2e
+          ADMIN_PASSWORD: devpassword123
+          LOGIN_RATE_LIMIT: '10000'
+          ORDER_RATE_LIMIT: '10000'
+          GLOBAL_RATE_LIMIT: '100000'
+        run: |
+          PGPASSWORD=ci_only_password psql -h localhost -U rangasso -d rangasso_test -c "CREATE DATABASE rangasso_e2e"
+          npx playwright install --with-deps chromium
+          npm -w apps/api run build
+          cd apps/api
+          node dist/scripts/seed-demo.js
+          node dist/scripts/create-admin.js --email dono@teste.local --name "Dono Teste"
+          node dist/server.js > ../../api-e2e.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf localhost:3000/api/health && break; sleep 1; done
+          cd ../..
+          npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+            api-e2e.log
+          retention-days: 7
 
   agent-windows:
     runs-on: windows-latest
@@ -83,3 +111,34 @@ jobs:
             apps/agent/dist/RangassoAgentSetup-*.exe
             apps/agent/dist/RangassoAgent-*-win-x64.zip
           retention-days: 14
+
+  deploy-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Imagem Docker de produção
+        run: docker build -t rangasso-delivery:ci .
+      - name: Docker Compose e Caddyfile válidos
+        working-directory: deploy
+        env:
+          DOMAIN: pedidos.exemplo.com
+          ACME_EMAIL: ci@exemplo.com
+          DB_PASSWORD: ci_only
+          IP_HASH_SECRET: ci_only_secret_0123456789abcdef
+        run: |
+          docker compose config --quiet
+          docker run --rm -e DOMAIN -e ACME_EMAIL -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          bash -n backup.sh && bash -n restore.sh
+      - name: Container sobe, migra e serve o cardápio
+        run: |
+          docker network create t
+          docker run -d --name db --network t -e POSTGRES_DB=rangasso -e POSTGRES_USER=rangasso -e POSTGRES_PASSWORD=ci_only postgres:16
+          until docker exec db pg_isready -U rangasso -d rangasso; do sleep 1; done
+          docker run -d --name app --network t -p 3000:3000 -e DATABASE_URL=postgres://rangasso:ci_only@db:5432/rangasso \
+            -e PUBLIC_URL=http://localhost:3000 -e IP_HASH_SECRET=ci_only_secret_0123456789abcdef rangasso-delivery:ci
+          for i in $(seq 1 30); do curl -sf localhost:3000/api/health && break; sleep 1; done
+          docker exec -e ADMIN_PASSWORD=ci-senha-forte-123 app node dist/scripts/create-admin.js --email ci@exemplo.com --name CI
+          curl -sf localhost:3000/api/public/store
+          curl -sf -o /dev/null localhost:3000/cardapio
+          curl -sf -o /dev/null localhost:3000/brand/logo-rangasso.png
+          docker logs app | tail -20

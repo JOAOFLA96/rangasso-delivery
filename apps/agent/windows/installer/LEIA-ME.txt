@@ -10,7 +10,7 @@ ANTES DE INSTALAR
    uma página de teste pelo Windows. Anote o nome exato da impressora.
    - Se a TM-T20 for de rede (Ethernet), anote o IP (imprima a folha de status segurando FEED ao ligar).
 2. No painel (Configurações > Impressora): escolha a conexão (USB/rede), o nome ou o IP,
-   a largura do papel, e clique em "Gerar chave do agente". Copie a chave (começa com rgd_).
+   a largura do papel, e clique em "+ Credencial de agente". Copie a chave (começa com rgd_).
 
 INSTALAR
 - Com o instalador (RangassoAgentSetup-x.y.z.exe): execute, informe o endereço do sistema e a chave.
@@ -45,5 +45,5 @@ PROBLEMAS COMUNS
   caracteres padrão; o agente seleciona PC860 (português) em cada comanda.
 - Impressora USB não aparece para o serviço: o serviço roda como "Sistema Local"; a impressora precisa
   estar instalada para todos os usuários (impressora local, não mapeada só para um usuário).
-- Comanda "incerta" no painel: o agente não sabe se o papel saiu (ex.: caiu no meio). Confira no balcão
-  e use "Marcar como impressa" ou "Imprimir de novo".
+- "Resultado incerto" no painel: o agente não sabe se o papel saiu (ex.: caiu no meio). Confira no balcão
+  e use "Saiu, marcar como impresso" ou "Não saiu, imprimir de novo" no detalhe do pedido.

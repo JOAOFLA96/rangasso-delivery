@@ -49,7 +49,7 @@ $needSetup = -not (Test-Path $config) -or $ServerUrl -or $Token -or $Printer -or
 if ($needSetup) {
   if (-not (Test-Path $config)) {
     if (-not $ServerUrl -and -not $Quiet) { $ServerUrl = Read-Host "Endereço do sistema (ex.: https://pedidos.seudominio.com.br)" }
-    if (-not $Token -and -not $Quiet) { $Token = Read-Host "Chave do agente (Painel > Configurações > Impressora > Gerar chave)" }
+    if (-not $Token -and -not $Quiet) { $Token = Read-Host "Chave do agente (Painel > Configurações > Impressora > + Credencial de agente)" }
   }
   $setupArgs = @($agent, "setup", "--config", $config)
   if ($ServerUrl) { $setupArgs += @("--server", $ServerUrl) }
