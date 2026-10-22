@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/build
+**/.cache
+**/.env
+**/data
+.git
+playwright-report
+test-results
+e2e
+apps/agent/integration
