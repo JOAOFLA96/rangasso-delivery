@@ -51,7 +51,17 @@ export async function agentRoutes(app: FastifyInstance) {
       [d.id, b.agentVersion, JSON.stringify({ ...b.printer, localQueue: b.localQueue ?? 0 }), b.printer.error ?? null],
     );
     emitStoreEvent(d.storeId, { type: 'agent.updated', deviceId: d.id });
-    return { ok: true, serverTime: new Date().toISOString(), device: { name: d.name } };
+    // Configuração da impressora definida no painel; o agente usa quando o config local está em modo "auto".
+    const s = (await pool.query(
+      `SELECT printer_connection, printer_host, printer_port, printer_windows_name, paper_columns, printer_model FROM store_settings WHERE store_id = $1`,
+      [d.storeId],
+    )).rows[0];
+    return {
+      ok: true,
+      serverTime: new Date().toISOString(),
+      device: { name: d.name },
+      printer: { connection: s.printer_connection, host: s.printer_host, port: s.printer_port, windowsName: s.printer_windows_name, columns: s.paper_columns, model: s.printer_model },
+    };
   });
 
   // Long-poll: devolve trabalhos assim que existirem ou após `wait` segundos sem nada.
@@ -63,8 +73,15 @@ export async function agentRoutes(app: FastifyInstance) {
 
     let jobs = await claimJobs(d.storeId, d.id);
     if (!jobs.length && q.wait > 0) {
+      // Acorda antes se houver retentativa agendada (falha com backoff) vencendo dentro da espera.
+      const next = (await pool.query(
+        `SELECT EXTRACT(EPOCH FROM (min(next_attempt_at) - now())) AS s FROM print_jobs
+          WHERE store_id = $1 AND status IN ('pending','failed') AND attempts < max_attempts`,
+        [d.storeId],
+      )).rows[0]?.s;
+      const waitMs = next == null ? q.wait * 1000 : Math.min(q.wait * 1000, Math.max(200, Number(next) * 1000 + 100));
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, q.wait * 1000);
+        const timer = setTimeout(done, waitMs);
         const off = onStoreEvent(d.storeId, (ev) => ev.type === 'print.queued' && done());
         req.raw.on('close', done);
         function done() {
@@ -77,7 +94,7 @@ export async function agentRoutes(app: FastifyInstance) {
     }
     for (const j of jobs) emitStoreEvent(d.storeId, { type: 'print.updated', jobId: j.id, orderId: j.order_id });
     return {
-      jobs: jobs.map((j) => ({ id: j.id, kind: j.kind, reprintNumber: j.reprint_number, copies: j.copies, attempt: j.attempts, payload: j.payload, createdAt: j.created_at })),
+      jobs: jobs.map((j) => ({ id: j.id, claimId: new Date(j.claimed_at).toISOString(), kind: j.kind, reprintNumber: j.reprint_number, copies: j.copies, attempt: j.attempts, payload: j.payload, createdAt: j.created_at })),
     };
   });
 

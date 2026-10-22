@@ -116,7 +116,7 @@ export function PrinterSettings() {
           <li>O agente fica instalado no computador ligado à Epson e busca os trabalhos no servidor pela internet. Não é preciso abrir portas no roteador.</li>
           <li>"Enviado à impressora" quer dizer que o Windows aceitou a comanda. Pela USB, a impressora não confirma a saída do papel; quando há confirmação (impressora de rede com status), aparece "Impresso".</li>
           <li>Se a internet cair, os pedidos continuam salvos na nuvem e imprimem quando o agente reconectar.</li>
-          <li>Conexão, porta e nome da impressora no Windows também precisam estar no arquivo de configuração do agente, no computador da loja.</li>
+          <li>Com o agente no modo padrão ("auto"), a conexão, o IP ou o nome da impressora no Windows e a largura do papel definidos aqui são aplicados no agente em até 30 segundos, sem mexer no computador da loja.</li>
         </ul>
       </section>
 
@@ -207,7 +207,7 @@ function PrinterForm({ s, manage, onSaved }: { s: Record<string, any>; manage: b
           </label>
           <label className="field"><span>Rodapé da comanda</span><input value={f.receiptFooter} maxLength={200} onChange={(e) => setF({ ...f, receiptFooter: e.target.value })} /></label>
         </div>
-        <p className="muted small">Estes dados servem de referência e para a comanda. O agente usa o próprio arquivo de configuração para achar a impressora: mantenha os dois iguais.</p>
+        <p className="muted small">O agente usa estes dados para achar a impressora (modo "auto", o padrão). Só se alguém fixou outra impressora no config.json do computador da loja é que ela prevalece.</p>
         {manage && <button className="btn btn-primary" onClick={save}>Salvar</button>}
       </fieldset>
     </section>

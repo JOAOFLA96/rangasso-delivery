@@ -1,0 +1,22 @@
+<!-- Configuração do serviço do Windows (WinSW). Executa o agente com o Node.js que vem no pacote. -->
+<service>
+  <id>RangassoAgent</id>
+  <name>Rangasso - Agente de Impressão</name>
+  <description>Recebe os pedidos do delivery Rangasso e imprime as comandas na impressora térmica.</description>
+  <executable>%BASE%\node\node.exe</executable>
+  <arguments>"%BASE%\agent.cjs" run --config "%ProgramData%\RangassoAgent\config.json"</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <depend>Spooler</depend>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <stoptimeout>20 sec</stoptimeout>
+  <logpath>%ProgramData%\RangassoAgent\service-logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>5120</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>

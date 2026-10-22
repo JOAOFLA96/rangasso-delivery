@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, formatDateTime } from '../../lib/api';
+import { errorText, useToast } from '../ui';
 
 interface Entry { id: number; action: string; entity: string; entity_id: string; data: any; created_at: string; user_name: string | null; device_name: string | null }
 
@@ -20,10 +21,11 @@ export function AuditLog() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [filter, setFilter] = useState('');
   const [offset, setOffset] = useState(0);
+  const toast = useToast();
   useEffect(() => {
     const p = new URLSearchParams({ limit: '100', offset: String(offset) });
     if (filter) p.set('action', filter);
-    api<{ entries: Entry[] }>(`/api/admin/audit?${p}`).then((r) => setEntries(r.entries));
+    api<{ entries: Entry[] }>(`/api/admin/audit?${p}`).then((r) => setEntries(r.entries)).catch((e) => toast(errorText(e), 'error'));
   }, [filter, offset]);
   return (
     <div>
