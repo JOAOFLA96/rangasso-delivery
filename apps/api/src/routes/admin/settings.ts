@@ -8,6 +8,8 @@ import { removeImage, saveImage } from '../../lib/uploads.js';
 import { requireRole } from '../../auth.js';
 import { imageUrl } from '../../services/menu.js';
 import { getOpenState } from '../../services/store.js';
+import { geocodeText } from '../../services/geocode.js';
+import { distanceTiers } from '../../services/orders.js';
 
 const uuid = z.string().uuid();
 const cents = z.number().int().min(0).max(100_000_00);
@@ -37,6 +39,15 @@ const deliveryBody = z.object({
   openMode: z.enum(['auto', 'force_open', 'force_closed']),
   acceptUnlistedNeighborhoods: z.boolean().optional(),
 }).refine((b) => b.etaMaxMinutes >= b.etaMinMinutes, { path: ['etaMaxMinutes'], message: 'O tempo máximo precisa ser maior ou igual ao mínimo.' });
+
+const distanceBody = z.object({
+  mode: z.enum(['neighborhood', 'distance']),
+  storeLat: z.number().min(-90).max(90).nullable(),
+  storeLng: z.number().min(-180).max(180).nullable(),
+  tiers: z.array(z.object({ maxKm: z.number().positive().max(200), feeCents: cents })).max(30),
+}).refine((b) => b.mode !== 'distance' || (b.storeLat != null && b.storeLng != null), { path: ['storeLat'], message: 'Localize a loja antes de ligar a taxa por km.' })
+  .refine((b) => b.mode !== 'distance' || b.tiers.length > 0, { path: ['tiers'], message: 'Cadastre pelo menos uma faixa de km.' })
+  .refine((b) => new Set(b.tiers.map((t) => Math.round(t.maxKm * 100))).size === b.tiers.length, { path: ['tiers'], message: 'Há duas faixas com o mesmo km.' });
 
 const printerBody = z.object({
   printerModel: z.string().trim().min(1).max(80),
@@ -98,6 +109,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
       hours: hours.rows,
       closures: closures.rows,
       neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents, active: n.active, feePending: n.fee_pending })),
+      distance: { mode: s.delivery_fee_mode, storeLat: s.store_lat, storeLng: s.store_lng, tiers: await distanceTiers(pool, storeId) },
     };
   });
 
@@ -132,6 +144,31 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
       ...(b.acceptUnlistedNeighborhoods === undefined ? {} : { accept_unlisted_neighborhoods: b.acceptUnlistedNeighborhoods }),
     });
     return { ok: true };
+  });
+
+  // Taxa por km: localização da loja + faixas. As faixas são trocadas todas de uma vez.
+  app.put('/settings/distance', canEdit, async (req) => {
+    const b = parse(distanceBody, req.body);
+    const storeId = (req as any).admin.storeId;
+    await tx(async (db) => {
+      const before = (await db.query('SELECT delivery_fee_mode, store_lat, store_lng FROM store_settings WHERE store_id = $1 FOR UPDATE', [storeId])).rows[0];
+      const beforeTiers = await distanceTiers(db, storeId);
+      await db.query('UPDATE store_settings SET delivery_fee_mode = $2, store_lat = $3, store_lng = $4, updated_at = now() WHERE store_id = $1', [storeId, b.mode, b.storeLat, b.storeLng]);
+      await db.query('DELETE FROM delivery_distance_tiers WHERE store_id = $1', [storeId]);
+      for (const t of b.tiers) {
+        await db.query('INSERT INTO delivery_distance_tiers (store_id, max_km, fee_cents) VALUES ($1,$2,$3)', [storeId, Math.round(t.maxKm * 100) / 100, t.feeCents]);
+      }
+      await audit(db, actor(req), 'settings.distance', 'store_settings', storeId, { before: { ...before, tiers: beforeTiers }, after: b });
+    });
+    return { ok: true };
+  });
+
+  // Acha a localização da loja pelo endereço (serviço de mapas). Não grava: o painel mostra e o gerente confirma.
+  app.post('/settings/locate-store', canEdit, async (req) => {
+    const b = parse(z.object({ address: z.string().trim().min(5).max(200) }), req.body);
+    const p = await geocodeText(pool, b.address);
+    if (!p) throw badRequest('not_found', 'Não achei esse endereço no mapa. Confira o texto ou informe a latitude e longitude manualmente.');
+    return { lat: p.lat, lng: p.lng, precision: p.precision, label: p.label };
   });
 
   app.put('/settings/printer', canEdit, async (req) => {

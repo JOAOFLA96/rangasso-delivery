@@ -69,6 +69,7 @@ A senha é gerada e mostrada **uma única vez**. Entre em `https://SEU-DOMINIO/a
 1. **Dados da loja:** nome, telefone/WhatsApp, endereço, contato de privacidade (LGPD).
 2. **Cardápio:** categorias, produtos, fotos, adicionais, promoções e estoque.
 3. **Entrega e horários:** bairros atendidos com taxa (o CEP do cliente preenche rua e bairro; bairro fora da lista entra sozinho marcado "taxa a definir" e o pedido sai com a taxa "a combinar" até você editar o bairro; dá para desligar em "Aceitar pedidos de bairros fora da lista"), pedido mínimo, tempo estimado, funcionamento por dia, feriados e fechamentos, modo de abertura.
+   - **Taxa por km (opcional):** em "Como cobrar a entrega", escolha "Por distância", digite o endereço da loja e clique em "Localizar no mapa" (confira o ponto no link; se estiver errado, cole a latitude/longitude do Google Maps). Cadastre as faixas (ex.: até 2 km R$ 5, até 5 km R$ 7). A distância é em **linha reta** (pelas ruas costuma ser 20–40% maior). O endereço do cliente é achado no OpenStreetMap (Nominatim, gratuito, 1 consulta por segundo, resultados guardados no banco); se não for achado ou o serviço estiver fora do ar, vale a taxa do bairro. Variável opcional `GEOCODER_URL` troca o serviço.
 4. **Impressora:** conexão, nome ou IP, largura do papel e chave do agente (veja [AGENTE.md](AGENTE.md)).
 5. Faça um pedido de teste pelo celular, acompanhe no painel e confira a comanda impressa.
 

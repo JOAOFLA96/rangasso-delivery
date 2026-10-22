@@ -7,7 +7,7 @@ async function noHorizontalScroll(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await db.query(`UPDATE store_settings SET open_mode = 'force_open', min_order_cents = 0`);
+  await db.query(`UPDATE store_settings SET open_mode = 'force_open', min_order_cents = 0, delivery_fee_mode = 'neighborhood'`);
   // Produtos com estoque controlado são consumidos a cada execução; repõe para o teste não depender do histórico.
   await db.query(`UPDATE products SET stock_qty = 500 WHERE track_stock AND available AND name NOT LIKE 'Lanche esgotado%'`);
   // Bloqueia o ViaCEP nos testes para não depender de rede externa.
@@ -158,4 +158,33 @@ test('CEP preenche rua e bairro; bairro fora da lista sai com taxa a combinar', 
   await expect(page.locator('.totals')).toContainText('a combinar');
   const hood = (await db.query(`SELECT fee_pending, fee_cents FROM neighborhoods WHERE name = 'Jardim do CEP'`)).rows[0];
   expect(hood).toEqual({ fee_pending: true, fee_cents: 0 });
+});
+
+test('taxa por km: calcula pela distância do endereço até a loja', async ({ page }) => {
+  await page.route('https://viacep.com.br/**', (r) =>
+    r.fulfill({ json: { cep: '01310-100', logradouro: 'Avenida do CEP', bairro: 'Jardim do CEP', localidade: 'São Paulo', uf: 'SP' } }));
+  // Loja localizada, faixas cadastradas e o endereço do cliente já no cache do mapa (o teste não usa a internet).
+  const store = (await db.query('SELECT store_id FROM store_settings LIMIT 1')).rows[0].store_id;
+  await db.query(`UPDATE store_settings SET delivery_fee_mode = 'distance', store_lat = -23.55, store_lng = -46.63`);
+  await db.query('DELETE FROM delivery_distance_tiers WHERE store_id = $1', [store]);
+  await db.query('INSERT INTO delivery_distance_tiers (store_id, max_km, fee_cents) VALUES ($1, 2, 500), ($1, 5, 990)', [store]);
+  const key = JSON.stringify({ street: '50 Avenida do CEP', city: 'Sao Paulo', state: 'SP', country: 'Brasil' }).toLowerCase();
+  await db.query(`INSERT INTO geocode_cache (query_key, lat, lng, label) VALUES ($1, -23.523, -46.63, 'teste')
+                  ON CONFLICT (query_key) DO UPDATE SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, created_at = now()`, [key]);
+  try {
+    await page.goto('/cardapio');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.getByRole('button', { name: /Batata frita/ }).click();
+    await page.getByRole('dialog').getByRole('button', { name: /Adicionar/ }).click();
+    await page.getByRole('button', { name: /Ver carrinho/ }).click();
+    await page.getByRole('button', { name: 'Finalizar pedido' }).click();
+    await page.locator('#f-cep').pressSequentially('01310100');
+    await expect(page.locator('#f-city')).toHaveValue('São Paulo');
+    await page.getByLabel('Número').fill('50');
+    await expect(page.locator('.totals')).toContainText('(3,0 km)');
+    await expect(page.locator('.totals')).toContainText('R$ 9,90');
+  } finally {
+    await db.query(`UPDATE store_settings SET delivery_fee_mode = 'neighborhood'`);
+  }
 });
