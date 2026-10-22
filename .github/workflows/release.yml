@@ -1,8 +1,8 @@
 name: Release do agente Windows
 
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -36,7 +36,7 @@ jobs:
         run: |
           $v = (Get-Content apps/agent/package.json | ConvertFrom-Json).version
           ./apps/agent/windows/ci-smoke.ps1 -Setup (Resolve-Path "apps/agent/dist/RangassoAgentSetup-$v.exe")
-      - name: Publicar release
+      - name: Anexar instalador ao release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,5 +45,4 @@ jobs:
           $exe = "apps/agent/dist/RangassoAgentSetup-$v.exe"
           $zip = "apps/agent/dist/RangassoAgent-$v-win-x64.zip"
           Get-FileHash $exe, $zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content apps/agent/dist/SHA256SUMS.txt
-          $notes = "Agente de impressão Rangasso $v para Windows 10/11 (64 bits). Instale com RangassoAgentSetup-$v.exe. O .zip é a versão portátil para instalação manual (install.ps1). Instruções: docs/AGENTE.md."
-          gh release create "${{ github.ref_name }}" $exe $zip apps/agent/dist/SHA256SUMS.txt --title "Agente Windows $v" --notes $notes
+          gh release upload "${{ github.event.release.tag_name }}" $exe $zip apps/agent/dist/SHA256SUMS.txt --clobber
