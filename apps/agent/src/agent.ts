@@ -314,7 +314,9 @@ export class Agent {
         this.connection.ok = false;
         this.connection.lastError = e instanceof ApiError && e.status === 401
           ? 'Chave do agente recusada (revogada ou inválida). Gere uma nova no painel.'
-          : (e as Error).message;
+          : e instanceof ApiError && e.status === 404
+            ? 'Esse endereço não é o do sistema Rangasso. Use só o endereço do site, ex.: https://rangasso.onrender.com'
+            : (e as Error).message;
         if (e instanceof ApiError && e.status === 401) {
           this.log.error('Credencial do agente recusada (revogada ou inválida). Gere uma nova chave no painel e atualize o config.json.');
           await this.sleep(60_000);

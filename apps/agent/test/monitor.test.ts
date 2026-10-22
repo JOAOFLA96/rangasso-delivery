@@ -84,6 +84,9 @@ describe('Monitor de Impressão', () => {
     expect(() => validateSetup({ serverUrl: 'https://a.com', printer: { mode: 'windows' } }, true)).toThrow(/impressora do Windows/);
     expect(() => validateSetup({ serverUrl: 'https://a.com', printer: { mode: 'network', host: '' } }, true)).toThrow(/IP/);
     expect(validateSetup({ serverUrl: 'http://localhost:3000', printer: {} }, true).printer.mode).toBe('auto');
+    // Endereço copiado do painel ou do cardápio: usa só a origem.
+    expect(validateSetup({ serverUrl: ' https://rangasso.onrender.com/admin ', printer: {} }, true).serverUrl).toBe('https://rangasso.onrender.com');
+    expect(validateSetup({ serverUrl: 'https://rangasso.onrender.com/cardapio?x=1', printer: {} }, true).serverUrl).toBe('https://rangasso.onrender.com');
   });
 
   it('imprimir teste sem agente configurado responde 409', async () => {
