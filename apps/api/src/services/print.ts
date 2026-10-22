@@ -128,7 +128,8 @@ export async function claimJobs(storeId: string, deviceId: string, limit = 5) {
     const r = await client.query(
       `UPDATE print_jobs j SET status = 'claimed', device_id = $2, attempts = attempts + 1, claimed_at = now(),
               lease_expires_at = now() + make_interval(secs => $4), updated_at = now()
-        WHERE j.id IN (
+        WHERE EXISTS (SELECT 1 FROM print_devices d WHERE d.id = $2 AND d.revoked_at IS NULL) -- long-poll aberto antes da revogação não pega trabalho
+          AND j.id IN (
           SELECT id FROM print_jobs
            WHERE store_id = $1 AND status IN ('pending','failed') AND attempts < max_attempts AND next_attempt_at <= now()
            ORDER BY created_at

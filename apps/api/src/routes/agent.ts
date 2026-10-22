@@ -73,8 +73,15 @@ export async function agentRoutes(app: FastifyInstance) {
 
     let jobs = await claimJobs(d.storeId, d.id);
     if (!jobs.length && q.wait > 0) {
+      // Acorda antes se houver retentativa agendada (falha com backoff) vencendo dentro da espera.
+      const next = (await pool.query(
+        `SELECT EXTRACT(EPOCH FROM (min(next_attempt_at) - now())) AS s FROM print_jobs
+          WHERE store_id = $1 AND status IN ('pending','failed') AND attempts < max_attempts`,
+        [d.storeId],
+      )).rows[0]?.s;
+      const waitMs = next == null ? q.wait * 1000 : Math.min(q.wait * 1000, Math.max(200, Number(next) * 1000 + 100));
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, q.wait * 1000);
+        const timer = setTimeout(done, waitMs);
         const off = onStoreEvent(d.storeId, (ev) => ev.type === 'print.queued' && done());
         req.raw.on('close', done);
         function done() {

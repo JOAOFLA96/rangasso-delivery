@@ -5,7 +5,8 @@ import net from 'node:net';
 export class FakeNetworkPrinter {
   server = net.createServer((s) => this.onConn(s));
   received: Buffer[] = [];
-  state = { offline: false, paperOut: false, coverOpen: false, silent: false, dropAfterData: false };
+  state = { offline: false, paperOut: false, coverOpen: false, silent: false, dropAfterData: false, holdAfterDataMs: 0 };
+  onData?: () => void;
   port = 0;
 
   async start() {
@@ -25,12 +26,18 @@ export class FakeNetworkPrinter {
       while ((i = buf.indexOf(Buffer.from([0x10, 0x04]))) >= 0 && buf.length >= i + 3) {
         const n = buf[i + 2];
         const before = buf.subarray(0, i);
+        let hold = 0;
         if (before.length) {
           this.received.push(Buffer.from(before));
+          this.onData?.();
           if (this.state.dropAfterData) return sock.destroy();
+          hold = this.state.holdAfterDataMs;
         }
         buf = buf.subarray(i + 3);
-        if (!this.state.silent) sock.write(Buffer.from([this.statusByte(n)]));
+        if (this.state.silent) continue;
+        const byte = Buffer.from([this.statusByte(n)]);
+        if (hold) setTimeout(() => !sock.destroyed && sock.write(byte), hold);
+        else sock.write(byte);
       }
     });
     sock.on('end', () => {

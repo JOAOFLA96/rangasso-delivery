@@ -59,7 +59,7 @@ begin
   ConfigPage := CreateInputQueryPage(wpWelcome,
     'Conexão com o sistema',
     'Informe o endereço do sistema e a chave do agente.',
-    'A chave é gerada no painel em Configurações > Impressora > Gerar chave do agente. ' +
+    'A chave é gerada no painel em Configurações > Impressora > + Credencial de agente. ' +
     'A impressora (USB ou rede) é escolhida no painel.');
   ConfigPage.Add('Endereço do sistema (https://...):', False);
   ConfigPage.Add('Chave do agente (rgd_...):', False);

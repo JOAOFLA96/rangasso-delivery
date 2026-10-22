@@ -236,7 +236,10 @@ export class Agent {
   async tick() {
     if (Date.now() - this.lastHeartbeat >= (this.opts.heartbeatMs ?? HEARTBEAT_MS)) await this.heartbeat();
     await this.flushOutbox();
-    const { jobs } = await this.api.jobs(this.opts.longPollSeconds ?? LONG_POLL_SECONDS);
+    // A espera termina a tempo do próximo heartbeat: estado da impressora e configuração do painel em até ~30 s.
+    const untilHeartbeat = Math.ceil(((this.opts.heartbeatMs ?? HEARTBEAT_MS) - (Date.now() - this.lastHeartbeat)) / 1000);
+    const wait = Math.min(this.opts.longPollSeconds ?? LONG_POLL_SECONDS, Math.max(1, untilHeartbeat));
+    const { jobs } = await this.api.jobs(this.opts.longPollSeconds === 0 ? 0 : wait);
     for (const job of jobs) {
       if (this.stopping) break;
       await this.handleJob(job);

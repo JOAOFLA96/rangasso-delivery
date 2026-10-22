@@ -1,0 +1,61 @@
+# Produção em um servidor (VPS) com Docker. HTTPS automático pelo Caddy (Let's Encrypt).
+# Uso: cd deploy && cp .env.example .env && (edite o .env) && docker compose up -d --build
+name: rangasso
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: rangasso
+      POSTGRES_USER: rangasso
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?defina DB_PASSWORD no .env}
+      TZ: America/Sao_Paulo
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rangasso -d rangasso"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Sem "ports": o banco não fica exposto na internet.
+
+  app:
+    build:
+      context: ..
+    image: rangasso-delivery:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rangasso:${DB_PASSWORD}@db:5432/rangasso
+      PUBLIC_URL: https://${DOMAIN:?defina DOMAIN no .env}
+      IP_HASH_SECRET: ${IP_HASH_SECRET:?defina IP_HASH_SECRET no .env}
+      STORE_SLUG: ${STORE_SLUG:-rangasso}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: America/Sao_Paulo
+    volumes:
+      - uploads:/data/uploads
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?defina ACME_EMAIL no .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  uploads:
+  caddy-data:
+  caddy-config:
