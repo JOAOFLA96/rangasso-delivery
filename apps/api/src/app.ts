@@ -5,12 +5,11 @@ import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { config, isProd } from './config.js';
 import { pool } from './db/pool.js';
 import { AppError } from './lib/errors.js';
-import { uploadRoot } from './lib/uploads.js';
+import { loadImage } from './lib/uploads.js';
 import { registerAdminGuard } from './auth.js';
 import { publicRoutes } from './routes/public.js';
 import { authRoutes } from './routes/auth.js';
@@ -86,13 +85,11 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     { prefix: '/api/admin' },
   );
 
-  await mkdir(uploadRoot(), { recursive: true });
-  await app.register(fastifyStatic, {
-    root: uploadRoot(),
-    prefix: '/uploads/',
-    decorateReply: false,
-    maxAge: '30d',
-    immutable: true,
+  // Imagens enviadas (cardápio, logo, fotos das avaliações). O nome é aleatório e nunca muda: cache longo.
+  app.get<{ Params: { '*': string } }>('/uploads/*', async (req, reply) => {
+    const img = await loadImage(req.params['*']);
+    if (!img) return reply.code(404).send({ error: { code: 'not_found', message: 'Imagem não encontrada.' } });
+    return reply.header('content-type', img.contentType).header('cache-control', 'public, max-age=2592000, immutable').header('x-content-type-options', 'nosniff').send(img.content);
   });
 
   // Frontend compilado (cardápio + painel). Rotas do SPA caem no index.html.

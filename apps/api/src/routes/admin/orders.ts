@@ -9,6 +9,8 @@ import { parse } from '../../lib/validate.js';
 import { requireRole } from '../../auth.js';
 import { ORDER_STATUSES, changeStatus, getOrderDetail } from '../../services/orders.js';
 import { createPrintJob, resolveJob } from '../../services/print.js';
+import { imageUrl } from '../../services/menu.js';
+import { notifyOrder, pushForStatus } from '../../services/push.js';
 
 const listQuery = z.object({
   q: z.string().max(80).optional(),
@@ -91,6 +93,48 @@ export async function adminOrderRoutes(app: FastifyInstance) {
       return res;
     });
     emitStoreEvent(admin.storeId, { type: 'order.updated', orderId: id, number: r.number });
+    // Aviso no celular do cliente (sem esperar: falha de envio não afeta o painel).
+    const token = (await pool.query('SELECT public_token FROM orders WHERE id = $1', [id])).rows[0]?.public_token;
+    const msg = token && pushForStatus(r.number, r.from, body.status, token);
+    if (msg) notifyOrder(id, msg).catch((e) => req.log.warn({ err: e }, 'falha ao enviar aviso push'));
+    return { ok: true };
+  });
+
+  // Avaliações dos clientes.
+  app.get('/reviews', async (req) => {
+    const storeId = req.admin!.storeId;
+    const q = parse(z.object({ before: z.string().datetime().optional() }), req.query);
+    const rows = await pool.query(
+      `SELECT r.id, r.rating, r.comment, r.photo_path, r.hidden, r.created_at, o.id AS order_id, o.number, o.customer_name, o.neighborhood_name
+         FROM order_reviews r JOIN orders o ON o.id = r.order_id
+        WHERE r.store_id = $1 AND ($2::timestamptz IS NULL OR r.created_at < $2)
+        ORDER BY r.created_at DESC LIMIT 50`,
+      [storeId, q.before ?? null],
+    );
+    const sum = await pool.query(
+      `SELECT count(*)::int AS count, coalesce(round(avg(rating)::numeric, 2), 0)::float AS average,
+              count(*) FILTER (WHERE rating = 5)::int AS r5, count(*) FILTER (WHERE rating = 4)::int AS r4,
+              count(*) FILTER (WHERE rating = 3)::int AS r3, count(*) FILTER (WHERE rating = 2)::int AS r2,
+              count(*) FILTER (WHERE rating = 1)::int AS r1
+         FROM order_reviews WHERE store_id = $1`,
+      [storeId],
+    );
+    const s = sum.rows[0];
+    return {
+      summary: { count: s.count, average: s.average, distribution: { 5: s.r5, 4: s.r4, 3: s.r3, 2: s.r2, 1: s.r1 } },
+      reviews: rows.rows.map((r) => ({
+        id: r.id, rating: r.rating, comment: r.comment, photoUrl: imageUrl(r.photo_path), hidden: r.hidden, createdAt: r.created_at,
+        orderId: r.order_id, orderNumber: r.number, customerName: r.customer_name, neighborhood: r.neighborhood_name,
+      })),
+    };
+  });
+
+  app.post<{ Params: { id: string } }>('/reviews/:id/visibility', { preHandler: requireRole('owner', 'manager') }, async (req) => {
+    const id = parse(z.string().uuid(), req.params.id);
+    const b = parse(z.object({ hidden: z.boolean() }), req.body);
+    const r = await pool.query('UPDATE order_reviews SET hidden = $3 WHERE id = $1 AND store_id = $2', [id, req.admin!.storeId, b.hidden]);
+    if (!r.rowCount) throw notFound('Avaliação');
+    await audit(pool, { storeId: req.admin!.storeId, userId: req.admin!.userId, ip: req.ip }, 'review.visibility', 'order_review', id, { hidden: b.hidden });
     return { ok: true };
   });
 
