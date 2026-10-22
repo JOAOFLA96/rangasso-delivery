@@ -67,6 +67,14 @@ export class Journal {
     this.save();
   }
 
+  // Últimos trabalhos tratados neste computador, do mais recente para o mais antigo.
+  recent(limit: number) {
+    return Object.values(this.state.claims)
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .slice(0, limit)
+      .map((c) => ({ label: c.label, state: c.state, outcome: c.outcome ?? null, at: c.at }));
+  }
+
   forget(claimKey: string) {
     delete this.state.claims[claimKey];
     this.save();

@@ -2,3 +2,5 @@
 *.cmd text eol=crlf
 *.iss text eol=crlf
 apps/agent/windows/installer/LEIA-ME.txt text eol=crlf
+*.url text eol=crlf
+*.ico binary

@@ -7,10 +7,17 @@ export class ApiError extends Error {
 }
 
 export class AgentApi {
+  private inflight = new Set<AbortController>();
   constructor(private baseUrl: string, private token: string, private version: string) {}
+
+  // Cancela as requisições em andamento (ex.: long-poll) para o agente parar ou recarregar a configuração na hora.
+  abortAll() {
+    for (const c of this.inflight) c.abort();
+  }
 
   private async req<T>(method: string, path: string, body?: unknown, timeoutMs = 15_000): Promise<T> {
     const ctrl = new AbortController();
+    this.inflight.add(ctrl);
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     let res: Response;
     try {
@@ -28,6 +35,7 @@ export class AgentApi {
       throw new ApiError(0, 'network', `Sem conexão com o servidor: ${(e as Error).name === 'AbortError' ? 'tempo esgotado' : (e as Error).message}`);
     } finally {
       clearTimeout(t);
+      this.inflight.delete(ctrl);
     }
     const data: any = await res.json().catch(() => null);
     if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? `http_${res.status}`, data?.error?.message ?? `HTTP ${res.status}`);

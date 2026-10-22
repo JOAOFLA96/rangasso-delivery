@@ -13,11 +13,16 @@ ANTES DE INSTALAR
    a largura do papel, e clique em "+ Credencial de agente". Copie a chave (começa com rgd_).
 
 INSTALAR
-- Com o instalador (RangassoAgentSetup-x.y.z.exe): execute, informe o endereço do sistema e a chave.
+- Com o instalador (RangassoAgentSetup-x.y.z.exe): execute e avance. No fim abre o Monitor de Impressão,
+  onde você cola o endereço do sistema e a chave (se não informou no instalador).
 - Com o .zip: extraia, abra o PowerShell como Administrador nesta pasta e rode:
     powershell -ExecutionPolicy Bypass -File .\install.ps1 -ServerUrl https://SEU-ENDERECO -Token rgd_SUA_CHAVE
 
 O serviço "Rangasso - Agente de Impressão" inicia junto com o Windows e reinicia sozinho se cair.
+
+MONITOR DE IMPRESSÃO
+  Atalho "Monitor de Impressão Rangasso" no menu Iniciar, ou abra http://127.0.0.1:17800 neste computador.
+  Mostra conexão, impressora, últimas comandas, botão Imprimir teste e a configuração.
 
 TESTAR
   "C:\Program Files\RangassoAgent\rangasso-agent.cmd" test-connection

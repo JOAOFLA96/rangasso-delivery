@@ -171,7 +171,7 @@ describe('integração: pedido → painel → agente → impressora', () => {
     expect(text).toContain('João da Integração');
     expect(text).toContain('Próximo à praça');
     const st = await adminFetch('/api/admin/printer/status');
-    expect(st.devices[0]).toMatchObject({ online: true, agent_version: '1.0.0' });
+    expect(st.devices[0]).toMatchObject({ online: true, agent_version: JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version });
     expect(st.devices[0].printer_state).toMatchObject({ mode: 'network', online: true });
   });
 

@@ -21,7 +21,14 @@ const schema = z.object({
   LOGIN_RATE_LIMIT: z.coerce.number().int().positive().default(10),
 });
 
-const parsed = schema.safeParse(process.env);
+// Hospedagens que informam o endereço público sozinhas (Render, Railway): usa se PUBLIC_URL não foi definido.
+const env = { ...process.env };
+if (!env.PUBLIC_URL) {
+  if (env.RENDER_EXTERNAL_URL) env.PUBLIC_URL = env.RENDER_EXTERNAL_URL;
+  else if (env.RAILWAY_PUBLIC_DOMAIN) env.PUBLIC_URL = `https://${env.RAILWAY_PUBLIC_DOMAIN}`;
+}
+
+const parsed = schema.safeParse(env);
 if (!parsed.success) {
   console.error('Configuração inválida:', parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
   process.exit(1);

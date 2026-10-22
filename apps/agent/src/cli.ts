@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Agent, AGENT_VERSION } from './agent.js';
 import { AgentApi } from './api.js';
 import { defaultConfigPath, defaultDataDir, loadConfig, type AgentConfig } from './config.js';
 import { Journal } from './journal.js';
 import { Logger } from './logger.js';
+import { MONITOR_PORT, startMonitor, type MonitorHost, type MonitorSetup } from './monitor.js';
 import { listWindowsPrinters } from './printers/windows.js';
 import { renderEscPos, renderText, type ReceiptPayload } from './receipt.js';
 
@@ -13,7 +14,8 @@ const HELP = `Agente de impressão Rangasso ${AGENT_VERSION}
 Uso: rangasso-agent <comando> [--config caminho\\config.json]
 
 Comandos:
-  run               Inicia o agente (é o que o serviço do Windows executa)
+  run               Inicia o agente e o Monitor de Impressão em http://127.0.0.1:${MONITOR_PORT} (é o que o serviço executa)
+                    [--monitor-port 17800] [--no-monitor]
   setup             Grava o config.json: --server https://... --token rgd_... [--printer auto|windows|network|file]
                     [--windows-name "EPSON TM-T20"] [--host 192.168.0.50] [--port 9100] [--columns 48] [--output-dir pasta]
   test-connection   Testa a conexão e a chave com o servidor
@@ -41,6 +43,137 @@ function testPayload(cfg: AgentConfig, columns: number): ReceiptPayload {
   return { test: true, store: { name: 'RANGASSO', timezone: 'America/Sao_Paulo' }, columns, createdAt: new Date().toISOString() };
 }
 
+interface ConfigPatch {
+  serverUrl?: string;
+  deviceToken?: string;
+  printer?: Partial<{ mode: string; windowsName: string; host: string; port: number; columns: number; outputDir: string }>;
+}
+
+// Grava o config.json mesclando com o atual. Valida num arquivo temporário antes de substituir.
+function writeConfig(configPath: string, patch: ConfigPatch) {
+  let current: any = {};
+  if (existsSync(configPath)) {
+    try {
+      current = JSON.parse(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
+    } catch {
+      current = {};
+    }
+  }
+  const printer = { mode: 'auto', windowsName: '', host: '', port: 9100, columns: 0, outputDir: '', ...(current.printer ?? {}) };
+  for (const [k, v] of Object.entries(patch.printer ?? {})) if (v !== undefined) (printer as any)[k] = v;
+  const next = {
+    serverUrl: patch.serverUrl ?? current.serverUrl ?? '',
+    deviceToken: patch.deviceToken ?? current.deviceToken ?? '',
+    printer,
+    dataDir: current.dataDir ?? defaultDataDir(),
+    logLevel: current.logLevel ?? 'info',
+  };
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  const tmp = configPath + '.tmp';
+  writeFileSync(tmp, JSON.stringify(next, null, 2));
+  try {
+    loadConfig(tmp);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw new Error((e as Error).message.replace(tmp, configPath));
+  }
+  writeFileSync(configPath, JSON.stringify(next, null, 2));
+  rmSync(tmp, { force: true });
+}
+
+function tailLog(dataDir: string, lines: number): string[] {
+  try {
+    const dir = path.join(dataDir, 'logs');
+    const files = readdirSync(dir).filter((f) => f.startsWith('agent-') && f.endsWith('.log')).sort();
+    const out: string[] = [];
+    for (let i = files.length - 1; i >= 0 && out.length < lines; i--) {
+      const content = readFileSync(path.join(dir, files[i]), 'utf8').split('\n').filter(Boolean);
+      out.unshift(...content.slice(-(lines - out.length)));
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// Serviço: Monitor de Impressão sempre no ar; o agente roda quando há configuração válida
+// e é reiniciado (sem derrubar o serviço) quando a configuração muda pelo Monitor.
+async function runService(configPath: string, flags: Record<string, string>) {
+  let agent: Agent | null = null;
+  let cfg: AgentConfig | null = null;
+  let cfgError: string | null = null;
+  let stopping = false;
+  let wake: (() => void) | null = null;
+  const baseLog = () => new Logger(cfg?.dataDir ?? defaultDataDir(), cfg?.logLevel ?? 'info', true);
+
+  const host: MonitorHost = {
+    agent: () => agent,
+    currentConfig: () => cfg && {
+      serverUrl: cfg.serverUrl,
+      hasToken: !!cfg.deviceToken,
+      printer: { mode: cfg.printer.mode, windowsName: cfg.printer.windowsName, host: cfg.printer.host, port: cfg.printer.port },
+    },
+    configError: () => cfgError,
+    logTail: (n) => tailLog(cfg?.dataDir ?? defaultDataDir(), n),
+    saveConfig: async (setup: MonitorSetup) => {
+      writeConfig(configPath, {
+        serverUrl: setup.serverUrl,
+        deviceToken: setup.deviceToken,
+        printer: { mode: setup.printer.mode, windowsName: setup.printer.windowsName ?? '', host: setup.printer.host ?? '', port: setup.printer.port ?? 9100 },
+      });
+      baseLog().info('Configuração alterada pelo Monitor de Impressão; reconectando.');
+      agent?.stop();
+      wake?.();
+    },
+  };
+
+  const stop = () => {
+    stopping = true;
+    agent?.stop();
+    wake?.();
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+  process.on('SIGBREAK' as NodeJS.Signals, stop);
+
+  let monitor: Awaited<ReturnType<typeof startMonitor>> | null = null;
+  if (flags['no-monitor'] !== 'true') {
+    const port = Number(flags['monitor-port'] ?? process.env.RANGASSO_MONITOR_PORT ?? MONITOR_PORT);
+    try {
+      monitor = await startMonitor(host, port);
+      baseLog().info(`Monitor de Impressão em http://127.0.0.1:${port}`);
+    } catch (e) {
+      baseLog().warn(`Monitor de Impressão não iniciou (porta ${port} ocupada?). O agente segue funcionando.`, e);
+    }
+  }
+
+  while (!stopping) {
+    try {
+      cfg = loadConfig(configPath);
+      cfgError = null;
+    } catch (e) {
+      cfg = null;
+      cfgError = existsSync(configPath) ? (e as Error).message : null;
+    }
+    if (!cfg) {
+      baseLog().warn(`Agente aguardando configuração. Abra http://127.0.0.1:${MONITOR_PORT} neste computador.${cfgError ? ` (${cfgError})` : ''}`);
+      // Espera o Monitor salvar a configuração (ou alguém editar o arquivo), checando a cada 30 s.
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, 30_000);
+        wake = () => {
+          clearTimeout(t);
+          resolve();
+        };
+      });
+      wake = null;
+      continue;
+    }
+    agent = new Agent(cfg, new Logger(cfg.dataDir, cfg.logLevel, true));
+    await agent.run();
+  }
+  monitor?.close();
+}
+
 async function main() {
   const { flags, rest } = args(process.argv.slice(2));
   const cmd = rest[0] ?? 'help';
@@ -50,35 +183,20 @@ async function main() {
   if (cmd === 'version') return void console.log(AGENT_VERSION);
 
   if (cmd === 'setup') {
-    let current: any = {};
-    if (existsSync(configPath)) current = JSON.parse(readFileSync(configPath, 'utf8').replace(/^﻿/, ''));
-    const printer = { mode: 'auto', windowsName: '', host: '', port: 9100, columns: 0, outputDir: '', ...(current.printer ?? {}) };
-    if (flags.printer) printer.mode = flags.printer;
-    if (flags['windows-name']) printer.windowsName = flags['windows-name'];
-    if (flags.host) printer.host = flags.host;
-    if (flags.port) printer.port = Number(flags.port);
-    if (flags.columns) printer.columns = Number(flags.columns);
-    if (flags['output-dir']) printer.outputDir = flags['output-dir'];
-    const next = {
-      serverUrl: flags.server ?? current.serverUrl ?? '',
-      deviceToken: flags.token ?? current.deviceToken ?? '',
-      printer,
-      dataDir: current.dataDir ?? defaultDataDir(),
-      logLevel: current.logLevel ?? 'info',
-    };
-    mkdirSync(path.dirname(configPath), { recursive: true });
-    const tmp = configPath + '.tmp';
-    writeFileSync(tmp, JSON.stringify(next, null, 2));
-    // valida antes de substituir
+    const patch: ConfigPatch = { serverUrl: flags.server, deviceToken: flags.token, printer: {} };
+    if (flags.printer) patch.printer!.mode = flags.printer;
+    if (flags['windows-name']) patch.printer!.windowsName = flags['windows-name'];
+    if (flags.host) patch.printer!.host = flags.host;
+    if (flags.port) patch.printer!.port = Number(flags.port);
+    if (flags.columns) patch.printer!.columns = Number(flags.columns);
+    if (flags['output-dir']) patch.printer!.outputDir = flags['output-dir'];
     try {
-      loadConfig(tmp);
+      writeConfig(configPath, patch);
     } catch (e) {
-      console.error((e as Error).message.replace(tmp, configPath));
+      console.error((e as Error).message);
       process.exitCode = 2;
       return;
     }
-    writeFileSync(configPath, JSON.stringify(next, null, 2));
-    rmSync(tmp, { force: true });
     console.log(`Configuração gravada em ${configPath}`);
     return;
   }
@@ -90,18 +208,9 @@ async function main() {
     return;
   }
 
-  const cfg = loadConfig(configPath);
-  const log = new Logger(cfg.dataDir, cfg.logLevel, true);
+  if (cmd === 'run') return runService(configPath, flags);
 
-  if (cmd === 'run') {
-    const agent = new Agent(cfg, log);
-    const stop = () => agent.stop();
-    process.on('SIGINT', stop);
-    process.on('SIGTERM', stop);
-    process.on('SIGBREAK' as NodeJS.Signals, stop);
-    await agent.run();
-    return;
-  }
+  const cfg = loadConfig(configPath);
 
   if (cmd === 'test-connection') {
     const api = new AgentApi(cfg.serverUrl, cfg.deviceToken, AGENT_VERSION);

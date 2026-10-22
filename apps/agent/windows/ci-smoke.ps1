@@ -41,6 +41,15 @@ $logText = Get-Content $log.FullName -Raw
 Check ($logText -match "iniciando") "agente registrou o início no log"
 Check ($logText -match "nova tentativa") "sem servidor, o agente fica tentando (backoff) sem cair"
 
+# 2b. Monitor de Impressão (página local) e atalho no menu Iniciar
+$st = Invoke-RestMethod -Uri "http://127.0.0.1:17800/api/state" -TimeoutSec 10
+Check ($st.configured -eq $true) "Monitor de Impressão responde e vê a configuração"
+Check ($null -eq $st.config.deviceToken) "Monitor não expõe a chave do agente"
+$page = Invoke-WebRequest -Uri "http://127.0.0.1:17800/" -UseBasicParsing -TimeoutSec 10
+Check ($page.Content -match "Monitor de Impress") "página do Monitor carrega"
+$lnk = Get-ChildItem "$env:ProgramData\Microsoft\Windows\Start Menu\Programs" -Filter "Monitor de Impress*" -ErrorAction SilentlyContinue
+Check ($null -ne $lnk) "atalho do Monitor no menu Iniciar"
+
 # 3. Diagnóstico e impressão pelo spooler
 $cmd = Join-Path $app "rangasso-agent.cmd"
 $list = & $cmd list-printers | Out-String
