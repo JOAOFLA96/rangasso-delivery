@@ -77,6 +77,30 @@ Start-Sleep -Seconds 20
 $pidAfter = (Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match "agent.cjs`" run" }).ProcessId
 Check (($null -ne $pidAfter) -and ($pidAfter -ne $pidBefore)) "serviço reiniciou o agente depois de ser derrubado"
 
+# 4b. Atualização automática: servidor falso oferece uma versão nova; o agente baixa, sai com código 3,
+# o serviço sobe de novo e o agent.cjs instalado carrega a versão baixada.
+$installedVersion = (& $cmd version | Out-String).Trim()
+$newVersion = "9.9.9"
+$fake = Start-Process -FilePath (Join-Path $app "node\node.exe") -ArgumentList "`"$PSScriptRoot\ci-fake-server.js`"", "`"$app\agent.cjs`"", $installedVersion, $newVersion, "3999" -PassThru -RedirectStandardOutput "$outDir\fake-server.log" -RedirectStandardError "$outDir\fake-server.err"
+$xmlPath = Join-Path $app "RangassoAgent.xml"
+(Get-Content $xmlPath -Raw) -replace "</service>", "  <env name=`"RANGASSO_UPDATE_FIRST_MS`" value=`"5000`"/>`r`n</service>" | Set-Content -Encoding UTF8 $xmlPath
+Restart-Service RangassoAgent
+$deadline = (Get-Date).AddSeconds(120)
+$loaded = $false
+while ((Get-Date) -lt $deadline -and -not $loaded) {
+  Start-Sleep -Seconds 5
+  $all = Get-ChildItem (Join-Path $dataDir "logs") -Filter "agent-*.log" | ForEach-Object { Get-Content -Encoding UTF8 $_.FullName -Raw } | Out-String
+  $loaded = $all -match "Agente Rangasso $([regex]::Escape($newVersion)) iniciando"
+}
+Get-Content "$outDir\fake-server.log" -ErrorAction SilentlyContinue | Select-Object -Last 15 | Write-Host
+Check ($all -match "Atualização $([regex]::Escape($newVersion)) baixada") "agente $installedVersion baixou a atualização $newVersion"
+Check $loaded "serviço reiniciou e passou a rodar a versão $newVersion"
+Start-Sleep -Seconds 20
+$state = Get-Content (Join-Path $dataDir "update\state.json") -Raw | ConvertFrom-Json
+Check ($state.healthy -eq $true) "versão $newVersion conectou e ficou confirmada"
+Check ((Get-Service RangassoAgent).Status -eq "Running") "serviço rodando depois da atualização"
+Stop-Process -Id $fake.Id -Force
+
 # 5. Desinstalação
 $unins = Get-ChildItem $app -Filter "unins*.exe" | Select-Object -First 1
 $p = Start-Process -FilePath $unins.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
