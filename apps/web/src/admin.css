@@ -168,3 +168,6 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
 }
 .a-main { padding: 16px 20px 64px; max-width: 900px; margin: 0 auto; }
 @media (max-width: 700px) { .a-main { padding: 12px 12px 64px; } }
+
+.address-test { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.address-test-result { margin-top: 12px; }

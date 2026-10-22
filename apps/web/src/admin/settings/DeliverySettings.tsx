@@ -111,7 +111,7 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
     const parsed = tiers.filter((t) => t.km.trim() || t.fee.trim()).map((t) => ({ maxKm: parseNum(t.km), feeCents: inputToCents(t.fee) }));
     if (parsed.some((t) => !(t.maxKm > 0) || t.feeCents == null || Number.isNaN(t.feeCents))) return toast('Confira as faixas: km maior que zero e taxa no formato 7,50.', 'error');
     try {
-      await api('/api/admin/settings/distance', { method: 'PUT', body: { mode, storeLat, storeLng, tiers: parsed } });
+      await api('/api/admin/settings/distance', { method: 'PUT', body: { mode, storeLat, storeLng, tiers: parsed, ...(address.trim() ? { address: address.trim() } : {}) } });
       toast('Taxa por km salva');
       reload();
     } catch (e) {
@@ -137,7 +137,7 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
       {mode === 'distance' && (
         <>
           <p className="muted small">
-            O sistema acha o endereço do cliente no mapa (OpenStreetMap) e mede a distância em linha reta até a loja. Pelas ruas, o caminho
+            O sistema acha o endereço do cliente no mapa (OpenStreetMap ou, se não achar, pelo CEP) e mede a distância em linha reta até a loja. Pelas ruas, o caminho
             costuma ser 20% a 40% maior: leve isso em conta nas faixas. Se o endereço não for encontrado, vale a taxa do bairro.
           </p>
           <label className="field"><span>Endereço da loja</span>
@@ -179,10 +179,79 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
               <li>Acima de {kmText(sorted[sorted.length - 1].n)} km: não entregamos</li>
             </ul>
           )}
+          {manage && <AddressTest />}
         </>
       )}
       {manage && <button className="btn btn-primary" onClick={save}>Salvar forma de cobrança</button>}
     </section>
+  );
+}
+
+interface AddressTestResult {
+  found: { lat: number; lng: number; label: string; precision: string; provider: string } | null;
+  distanceKm: number | null; feeCents: number | null; outOfArea: boolean; storeLocated: boolean;
+  trace: { provider: string; query: string; result: string; detail?: string; cached?: boolean }[];
+}
+const PROVIDER_NAMES: Record<string, string> = { nominatim: 'OpenStreetMap', photon: 'Photon', cep: 'CEP' };
+
+// Testa um endereço de cliente com a regra que o pedido usa (salve antes as faixas e o ponto da loja).
+function AddressTest() {
+  const toast = useToast();
+  const [f, setF] = useState({ cep: '', street: '', number: '', city: '', state: 'SP' });
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<AddressTestResult | null>(null);
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+
+  async function fillCep() {
+    const cep = f.cep.replace(/\D/g, '');
+    if (cep.length !== 8) return;
+    try {
+      const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`).then((x) => x.json());
+      if (!r.erro) setF((x) => ({ ...x, street: r.logradouro || x.street, city: r.localidade || x.city, state: r.uf || x.state }));
+    } catch { /* sem CEP automático: preenche à mão */ }
+  }
+
+  async function run() {
+    setBusy(true);
+    setRes(null);
+    try {
+      setRes(await api<AddressTestResult>('/api/admin/settings/test-address', { body: f }));
+    } catch (e) {
+      toast(errorText(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="address-test">
+      <h4>Testar um endereço de cliente</h4>
+      <p className="muted small">Mostra a distância e a taxa que o pedido teria. Salve a forma de cobrança antes de testar.</p>
+      <div className="grid-2">
+        <label className="field"><span>CEP</span><input id="t-cep" inputMode="numeric" value={f.cep} onChange={set('cep')} onBlur={fillCep} placeholder="13334-050" /></label>
+        <label className="field"><span>Número</span><input id="t-number" value={f.number} onChange={set('number')} /></label>
+      </div>
+      <label className="field"><span>Rua do cliente</span><input id="t-street" value={f.street} onChange={set('street')} /></label>
+      <div className="grid-2">
+        <label className="field"><span>Cidade do cliente</span><input id="t-city" value={f.city} onChange={set('city')} /></label>
+        <label className="field"><span>UF</span><input id="t-state" value={f.state} maxLength={2} onChange={set('state')} /></label>
+      </div>
+      <button type="button" className="btn btn-secondary" onClick={run} disabled={busy || f.street.trim().length < 2 || f.city.trim().length < 2}>{busy ? 'Testando…' : 'Testar endereço'}</button>
+      {res && (
+        <div className="address-test-result" role="status">
+          {!res.storeLocated ? <p className="alert alert-warning">A loja ainda não tem latitude e longitude salvas.</p>
+            : !res.found ? <p className="alert alert-warning">Endereço não encontrado no mapa. Esse pedido sairia com a taxa do bairro.</p>
+            : res.outOfArea ? <p className="alert alert-warning">{kmText(res.distanceKm!)} km da loja: fora das faixas, o pedido seria recusado.</p>
+            : <p className="alert alert-info"><strong>{kmText(res.distanceKm!)} km da loja · taxa {res.feeCents == null ? '—' : brl(res.feeCents)}</strong><br />
+                Achado: {res.found.label} ({PROVIDER_NAMES[res.found.provider] ?? res.found.provider}{res.found.precision === 'cep' ? ', pelo CEP' : res.found.precision === 'street' ? ', só pela rua' : ''})</p>}
+          <ul className="muted small">
+            {res.trace.map((t, i) => (
+              <li key={i}>{PROVIDER_NAMES[t.provider] ?? t.provider}: {t.result}{t.detail && t.result === 'erro' ? ` (${t.detail})` : ''}{t.cached ? ' (guardado)' : ''}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 

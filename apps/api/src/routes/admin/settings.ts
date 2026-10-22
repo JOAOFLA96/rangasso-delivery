@@ -7,8 +7,8 @@ import { parse } from '../../lib/validate.js';
 import { removeImage, saveImage } from '../../lib/uploads.js';
 import { requireRole } from '../../auth.js';
 import { imageUrl } from '../../services/menu.js';
-import { getOpenState } from '../../services/store.js';
-import { geocodeText } from '../../services/geocode.js';
+import { getOpenState, getSettings } from '../../services/store.js';
+import { distanceKm, geocodeAddress, geocodeText, type GeoTry } from '../../services/geocode.js';
 import { distanceTiers } from '../../services/orders.js';
 
 const uuid = z.string().uuid();
@@ -45,6 +45,8 @@ const distanceBody = z.object({
   storeLat: z.number().min(-90).max(90).nullable(),
   storeLng: z.number().min(-180).max(180).nullable(),
   tiers: z.array(z.object({ maxKm: z.number().positive().max(200), feeCents: cents })).max(30),
+  // Endereço da loja (o mesmo de "Dados da loja"); opcional para não exigir de quem só troca as faixas.
+  address: z.string().trim().max(200).optional(),
 }).refine((b) => b.mode !== 'distance' || (b.storeLat != null && b.storeLng != null), { path: ['storeLat'], message: 'Localize a loja antes de ligar a taxa por km.' })
   .refine((b) => b.mode !== 'distance' || b.tiers.length > 0, { path: ['tiers'], message: 'Cadastre pelo menos uma faixa de km.' })
   .refine((b) => new Set(b.tiers.map((t) => Math.round(t.maxKm * 100))).size === b.tiers.length, { path: ['tiers'], message: 'Há duas faixas com o mesmo km.' });
@@ -154,6 +156,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
       const before = (await db.query('SELECT delivery_fee_mode, store_lat, store_lng FROM store_settings WHERE store_id = $1 FOR UPDATE', [storeId])).rows[0];
       const beforeTiers = await distanceTiers(db, storeId);
       await db.query('UPDATE store_settings SET delivery_fee_mode = $2, store_lat = $3, store_lng = $4, updated_at = now() WHERE store_id = $1', [storeId, b.mode, b.storeLat, b.storeLng]);
+      if (b.address) await db.query('UPDATE store_settings SET address = $2 WHERE store_id = $1', [storeId, b.address]);
       await db.query('DELETE FROM delivery_distance_tiers WHERE store_id = $1', [storeId]);
       for (const t of b.tiers) {
         await db.query('INSERT INTO delivery_distance_tiers (store_id, max_km, fee_cents) VALUES ($1,$2,$3)', [storeId, Math.round(t.maxKm * 100) / 100, t.feeCents]);
@@ -169,6 +172,25 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     const p = await geocodeText(pool, b.address);
     if (!p) throw badRequest('not_found', 'Não achei esse endereço no mapa. Confira o texto ou informe a latitude e longitude manualmente.');
     return { lat: p.lat, lng: p.lng, precision: p.precision, label: p.label };
+  });
+
+  // Teste de um endereço de cliente: mostra o que cada serviço de mapas achou, a distância e a taxa que o pedido teria.
+  app.post('/settings/test-address', canEdit, async (req) => {
+    const b = parse(z.object({
+      street: z.string().trim().min(2).max(120), number: z.string().trim().max(15).default(''), city: z.string().trim().min(2).max(80),
+      state: z.string().trim().max(30).default(''), cep: z.string().max(12).default(''),
+    }), req.body);
+    const storeId = (req as any).admin.storeId;
+    const s = await getSettings(pool, storeId);
+    const trace: GeoTry[] = [];
+    const p = await geocodeAddress(pool, b, trace);
+    const tiers = await distanceTiers(pool, storeId);
+    const km = p && s.store_lat != null && s.store_lng != null ? Math.round(distanceKm({ lat: s.store_lat, lng: s.store_lng }, p) * 100) / 100 : null;
+    const tier = km == null ? null : tiers.find((t) => km <= t.maxKm) ?? null;
+    return {
+      found: p ? { lat: p.lat, lng: p.lng, label: p.label, precision: p.precision, provider: p.provider } : null,
+      distanceKm: km, feeCents: tier?.feeCents ?? null, outOfArea: km != null && !tier, storeLocated: s.store_lat != null, trace,
+    };
   });
 
   app.put('/settings/printer', canEdit, async (req) => {

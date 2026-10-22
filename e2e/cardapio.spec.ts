@@ -168,7 +168,7 @@ test('taxa por km: calcula pela distância do endereço até a loja', async ({ p
   await db.query(`UPDATE store_settings SET delivery_fee_mode = 'distance', store_lat = -23.55, store_lng = -46.63`);
   await db.query('DELETE FROM delivery_distance_tiers WHERE store_id = $1', [store]);
   await db.query('INSERT INTO delivery_distance_tiers (store_id, max_km, fee_cents) VALUES ($1, 2, 500), ($1, 5, 990)', [store]);
-  const key = JSON.stringify({ street: '50 Avenida do CEP', city: 'Sao Paulo', state: 'SP', country: 'Brasil' }).toLowerCase();
+  const key = JSON.stringify({ provider: 'nominatim', street: '50 Avenida do CEP', city: 'Sao Paulo', state: 'SP', country: 'Brasil' }).toLowerCase();
   await db.query(`INSERT INTO geocode_cache (query_key, lat, lng, label) VALUES ($1, -23.523, -46.63, 'teste')
                   ON CONFLICT (query_key) DO UPDATE SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, created_at = now()`, [key]);
   try {

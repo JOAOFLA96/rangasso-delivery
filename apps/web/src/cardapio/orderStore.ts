@@ -31,6 +31,7 @@ export const isActive = (status: string) => status !== 'completed' && status !==
 
 // ---- Avisos no celular (Web Push) ----
 const PUSH_KEY = 'rangasso.push.v1';
+export const PUSH_EVENT = 'rangasso:push'; // avisa a tela do pedido quando os avisos foram ligados
 
 export const pushSupported = () => typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 // iPhone/iPad fora da Tela de Início: o Safari só libera avisos para o app adicionado à Tela de Início.
@@ -55,4 +56,5 @@ export async function enablePush(token: string) {
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
   await api(`/api/public/orders/${token}/push`, { body: sub.toJSON() });
   storage.set(PUSH_KEY, [token, ...storage.get<string[]>(PUSH_KEY, []).filter((t) => t !== token)].slice(0, 20));
+  window.dispatchEvent(new Event(PUSH_EVENT));
 }
