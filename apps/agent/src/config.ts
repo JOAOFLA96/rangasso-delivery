@@ -32,12 +32,24 @@ export function defaultConfigPath() {
   return candidates.find((c) => existsSync(c)) ?? candidates[0];
 }
 
+// Aceita o endereço copiado de qualquer página do sistema (ex.: .../admin ou .../cardapio) e usa só a origem.
+export function normalizeServerUrl(raw: string): string {
+  const v = raw.trim();
+  try {
+    const u = new URL(v);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
+  } catch {
+    /* inválido: a validação abaixo explica o problema */
+  }
+  return v.replace(/\/+$/, '');
+}
+
 export function loadConfig(configPath = defaultConfigPath()): AgentConfig {
   if (!existsSync(configPath)) throw new Error(`Arquivo de configuração não encontrado: ${configPath}`);
   const raw = JSON.parse(readFileSync(configPath, 'utf8').replace(/^\uFEFF/, ''));
   const p = raw.printer ?? {};
   const cfg: AgentConfig = {
-    serverUrl: String(raw.serverUrl ?? '').replace(/\/+$/, ''),
+    serverUrl: normalizeServerUrl(String(raw.serverUrl ?? '')),
     deviceToken: String(raw.deviceToken ?? '').trim(),
     printer: {
       mode: ['auto', 'windows', 'network', 'file'].includes(p.mode) ? p.mode : 'auto',

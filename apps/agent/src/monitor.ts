@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Agent } from './agent.js';
 import { AGENT_VERSION } from './agent.js';
 import { AgentApi } from './api.js';
+import { normalizeServerUrl } from './config.js';
 import { MONITOR_HTML } from './monitorPage.js';
 import { listWindowsPrinters } from './printers/windows.js';
 
@@ -51,7 +52,7 @@ async function readJson(req: IncomingMessage): Promise<any> {
 }
 
 export function validateSetup(b: any, hasToken: boolean): MonitorSetup {
-  const serverUrl = String(b?.serverUrl ?? '').trim().replace(/\/+$/, '');
+  const serverUrl = normalizeServerUrl(String(b?.serverUrl ?? ''));
   const deviceToken = String(b?.deviceToken ?? '').trim();
   const mode = ['auto', 'windows', 'network'].includes(b?.printer?.mode) ? b.printer.mode : 'auto';
   const problems: string[] = [];
