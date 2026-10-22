@@ -132,3 +132,11 @@ O prazo deve ser definido pelo responsável da loja (com o contador). Ele deve c
 | Certificado não sai | `docker compose logs caddy`: o DNS precisa já apontar para o servidor |
 | Painel não atualiza sozinho | Proxy/antivírus da rede bloqueando SSE; o painel recarrega a lista ao reconectar |
 | Pedidos não imprimem | Painel > Impressora: agente online? Fila? Veja [AGENTE.md](AGENTE.md) |
+
+## Alternativa: hospedagem gerenciada (Render ou Railway)
+
+Para testar sem servidor próprio, o repositório traz `render.yaml` (Render) e `railway.json` (Railway). Os dois usam o mesmo `Dockerfile`.
+
+- O endereço público é detectado sozinho (`RENDER_EXTERNAL_URL` ou `RAILWAY_PUBLIC_DOMAIN`), sem precisar definir `PUBLIC_URL`.
+- Sem terminal na hospedagem, o primeiro usuário é criado pelas variáveis `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD` (e `INITIAL_ADMIN_NAME`). Elas só têm efeito enquanto a loja não tem nenhum usuário. Depois do primeiro login, troque a senha no painel e apague `INITIAL_ADMIN_PASSWORD`.
+- **Plano grátis do Render (só para teste):** o site dorme após 15 minutos sem acesso e leva uns 30 segundos para acordar; o disco é temporário, então fotos enviadas pelo painel somem quando o serviço reinicia; o banco grátis expira. Para operar de verdade, use plano pago com disco persistente ou a VPS acima.

@@ -178,3 +178,29 @@ describe('usuários', () => {
     expect(self.json().error.code).toBe('self_lockout');
   });
 });
+
+describe('primeiro usuário pela hospedagem (INITIAL_ADMIN_*)', () => {
+  it('cria o dono só quando a loja não tem usuários', async () => {
+    const { bootstrapAdmin } = await import('../src/scripts/bootstrap-admin.js');
+    process.env.INITIAL_ADMIN_EMAIL = 'Novo@T.local';
+    process.env.INITIAL_ADMIN_PASSWORD = 'senha-forte-inicial-123';
+    try {
+      await bootstrapAdmin(pool, () => {});
+      expect((await pool.query(`SELECT count(*) FROM admin_users WHERE email = 'novo@t.local'`)).rows[0].count).toBe('0');
+      await pool.query('DELETE FROM admin_sessions');
+      await pool.query('UPDATE audit_log SET user_id = NULL');
+      await pool.query('UPDATE print_devices SET created_by = NULL');
+      await pool.query('DELETE FROM admin_users');
+      await bootstrapAdmin(pool, () => {});
+      const u = (await pool.query(`SELECT role FROM admin_users WHERE email = 'novo@t.local'`)).rows[0];
+      expect(u.role).toBe('owner');
+      const login = await app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'x-requested-with': 'rangasso' }, payload: { email: 'novo@t.local', password: 'senha-forte-inicial-123' } });
+      expect(login.statusCode).toBe(200);
+      const h = { cookie: `rg_sess=${login.cookies.find((c) => c.name === 'rg_sess')!.value}` };
+      expect((await app.inject({ method: 'GET', url: '/api/auth/me', headers: h })).json().user.role).toBe('owner');
+    } finally {
+      delete process.env.INITIAL_ADMIN_EMAIL;
+      delete process.env.INITIAL_ADMIN_PASSWORD;
+    }
+  });
+});

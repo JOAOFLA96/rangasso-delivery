@@ -72,6 +72,8 @@ jobs:
 
   agent-windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -111,6 +113,25 @@ jobs:
             apps/agent/dist/RangassoAgentSetup-*.exe
             apps/agent/dist/RangassoAgent-*-win-x64.zip
           retention-days: 90
+      - name: Publica o instalador no branch "instalador" (só no main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $v = (Get-Content apps/agent/package.json | ConvertFrom-Json).version
+          $dir = Join-Path $env:RUNNER_TEMP "instalador"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item "apps/agent/dist/RangassoAgentSetup-$v.exe" $dir
+          Push-Location $dir
+          $h = (Get-FileHash "RangassoAgentSetup-$v.exe" -Algorithm SHA256).Hash.ToLower()
+          "$h  RangassoAgentSetup-$v.exe" | Set-Content SHA256SUMS.txt
+          "Instalador do agente gerado pelo CI a partir de ${{ github.sha }}." | Set-Content LEIA-ME.txt
+          git init -q -b instalador
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Instalador $v (${{ github.sha }})"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" instalador
+          Pop-Location
 
   deploy-check:
     runs-on: ubuntu-latest

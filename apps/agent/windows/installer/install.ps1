@@ -44,8 +44,12 @@ $agent = Join-Path $InstallDir "agent.cjs"
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 & icacls $dataDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
 
-# 4. Configuração
+# 4. Configuração (sem endereço/chave em modo silencioso: configura depois pelo Monitor de Impressão)
 $needSetup = -not (Test-Path $config) -or $ServerUrl -or $Token -or $Printer -or $WindowsName -or $PrinterHost
+if ($needSetup -and $Quiet -and -not (Test-Path $config) -and -not $ServerUrl -and -not $Token) {
+  Write-Host "Sem configuração ainda. Abra o Monitor de Impressão (http://127.0.0.1:17800) para informar o endereço e a chave."
+  $needSetup = $false
+}
 if ($needSetup) {
   if (-not (Test-Path $config)) {
     if (-not $ServerUrl -and -not $Quiet) { $ServerUrl = Read-Host "Endereço do sistema (ex.: https://pedidos.seudominio.com.br)" }
@@ -62,8 +66,10 @@ if ($needSetup) {
 }
 
 # 5. Teste de conexão (não impede a instalação: a internet pode estar fora agora)
-& $node $agent test-connection --config $config
-if ($LASTEXITCODE -ne 0) { Write-Warning "Não foi possível falar com o servidor agora. O serviço continuará tentando sozinho." }
+if (Test-Path $config) {
+  & $node $agent test-connection --config $config
+  if ($LASTEXITCODE -ne 0) { Write-Warning "Não foi possível falar com o servidor agora. O serviço continuará tentando sozinho." }
+}
 
 # 6. Registra o serviço (início automático, reinício em caso de falha)
 if (-not (Get-Service -Name RangassoAgent -ErrorAction SilentlyContinue)) {
@@ -79,4 +85,5 @@ if (-not $NoStart) {
 Write-Host ""
 Write-Host "Instalado em $InstallDir"
 Write-Host "Configuração e logs: $dataDir"
+Write-Host "Monitor de Impressão: http://127.0.0.1:17800 (atalho no menu Iniciar)"
 Write-Host "Diagnóstico: `"$InstallDir\rangasso-agent.cmd`" status   |   test-print   |   list-printers"

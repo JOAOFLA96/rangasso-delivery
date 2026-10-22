@@ -72,7 +72,7 @@ cpSync(winsw, path.join(out, 'RangassoAgent.exe'));
 cpSync(bundle, path.join(out, 'agent.cjs'));
 mkdirSync(path.join(out, 'scripts'));
 for (const f of ['raw-print.ps1', 'printer-status.ps1']) cpSync(path.join(root, 'windows', f), path.join(out, 'scripts', f));
-for (const f of ['RangassoAgent.xml', 'install.ps1', 'uninstall.ps1', 'rangasso-agent.cmd', 'LEIA-ME.txt']) {
+for (const f of ['RangassoAgent.xml', 'install.ps1', 'uninstall.ps1', 'rangasso-agent.cmd', 'LEIA-ME.txt', 'rangasso.ico', 'MonitorImpressao.url']) {
   cpSync(path.join(root, 'windows', 'installer', f), path.join(out, f));
 }
 cpSync(path.join(root, 'config.example.json'), path.join(out, 'config.example.json'));

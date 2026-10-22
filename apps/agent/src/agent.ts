@@ -67,6 +67,9 @@ export class Agent {
   private readonly sleep: (ms: number) => Promise<void>;
   private sleepAbort: (() => void) | null = null;
   readonly stats = { printed: 0, failed: 0, uncertain: 0 };
+  // Estado da conexão com o servidor, exibido no Monitor de Impressão.
+  readonly connection: { ok: boolean | null; lastOkAt: string | null; lastError: string | null; deviceName: string | null } = { ok: null, lastOkAt: null, lastError: null, deviceName: null };
+  readonly startedAt = new Date().toISOString();
 
   constructor(private cfg: AgentConfig, private log: Logger, private opts: AgentOptions = {}) {
     this.api = opts.api ?? new AgentApi(cfg.serverUrl, cfg.deviceToken, AGENT_VERSION);
@@ -80,6 +83,53 @@ export class Agent {
   stop() {
     this.stopping = true;
     this.sleepAbort?.();
+    (this.api as Partial<AgentApi>).abortAll?.();
+  }
+
+  get config() {
+    return this.cfg;
+  }
+
+  get printerConfigFromPanel() {
+    return this.serverPrinter;
+  }
+
+  // Resumo para o Monitor de Impressão (nunca inclui a chave do agente).
+  async snapshot(refreshPrinter = false) {
+    let printer: { mode: string; target: string } | null = null;
+    let printerError: string | null = null;
+    try {
+      const p = this.resolvePrinter();
+      printer = { mode: p.mode, target: p.target };
+    } catch (e) {
+      printerError = (e as Error).message;
+    }
+    const status = printer ? await this.printerStatus(refreshPrinter) : null;
+    return {
+      connection: { ...this.connection },
+      printer,
+      printerError,
+      printerStatus: status,
+      columns: this.columns(),
+      stats: { ...this.stats },
+      pending: this.journal.outbox.length,
+      recent: this.journal.recent(20),
+      startedAt: this.startedAt,
+    };
+  }
+
+  // Comanda de teste direto na impressora, sem passar pelo servidor.
+  async testPrint() {
+    const printer = this.resolvePrinter();
+    const columns = this.columns();
+    const data = renderEscPos(
+      { test: true, store: { name: 'RANGASSO', timezone: 'America/Sao_Paulo' }, columns, createdAt: new Date().toISOString() },
+      { kind: 'test', reprintNumber: 0, copies: 1 },
+    );
+    const r = await printer.print(data, 'rangasso-teste');
+    this.status = null;
+    this.log.info(`Teste local: ${r.outcome === 'printed' ? 'impresso (confirmado pela impressora)' : 'enviado à impressora'}`);
+    return r;
   }
 
   columns() {
@@ -138,6 +188,7 @@ export class Agent {
       localQueue: this.journal.outbox.length,
     });
     this.lastHeartbeat = Date.now();
+    Object.assign(this.connection, { ok: true, lastOkAt: new Date().toISOString(), lastError: null, deviceName: r.device.name });
     const changed = JSON.stringify(r.printer) !== JSON.stringify(this.serverPrinter);
     this.serverPrinter = r.printer;
     if (changed && this.cfg.printer.mode === 'auto') {
@@ -255,8 +306,15 @@ export class Agent {
         await this.tick();
         if (this.backoffMs) this.log.info('Conexão com o servidor restabelecida.');
         this.backoffMs = 0;
+        this.connection.ok = true;
+        this.connection.lastOkAt = new Date().toISOString();
+        this.connection.lastError = null;
       } catch (e) {
         if (this.stopping) break;
+        this.connection.ok = false;
+        this.connection.lastError = e instanceof ApiError && e.status === 401
+          ? 'Chave do agente recusada (revogada ou inválida). Gere uma nova no painel.'
+          : (e as Error).message;
         if (e instanceof ApiError && e.status === 401) {
           this.log.error('Credencial do agente recusada (revogada ou inválida). Gere uma nova chave no painel e atualize o config.json.');
           await this.sleep(60_000);

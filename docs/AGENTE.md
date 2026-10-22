@@ -38,7 +38,18 @@ O agente é um serviço do Windows instalado no computador do balcão. Ele busca
 
 ## Instalar
 
-**Com o instalador** `RangassoAgentSetup-x.y.z.exe`: execute-o como administrador e informe o endereço do sistema (`https://...`) e a chave. Ao final, o serviço já estará rodando.
+**Com o instalador** `RangassoAgentSetup-x.y.z.exe` (recomendado): execute-o e avance. O endereço e a chave podem ser informados no instalador ou deixados em branco. No fim, o **Monitor de Impressão** abre no navegador; se faltou configurar, ele mostra um passo a passo para colar o endereço e a chave. O serviço já fica rodando.
+
+## Monitor de Impressão
+
+Página local em `http://127.0.0.1:17800`, aberta pelo atalho **Monitor de Impressão Rangasso** (menu Iniciar e área de trabalho). Mostra:
+
+- se o computador está conectado ao sistema e com qual nome de agente;
+- o estado da impressora (pronta, sem papel, tampa aberta, desligada; pela USB a Epson não informa papel/tampa);
+- as últimas comandas impressas por este computador e os avisos aguardando internet;
+- o botão **Imprimir teste**, a configuração (endereço, chave, qual impressora usar) e o registro de atividade.
+
+A página só abre no próprio computador (não fica acessível pela rede da loja) e nunca mostra a chave do agente. Fechar o navegador não para o agente.
 
 **Com o pacote .zip:** extraia o pacote e, no PowerShell como Administrador, dentro da pasta, rode:
 

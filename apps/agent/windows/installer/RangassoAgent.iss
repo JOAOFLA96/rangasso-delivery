@@ -27,6 +27,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=Agente de Impressão Rangasso
+UninstallDisplayIcon={app}\rangasso.ico
+SetupIconFile=rangasso.ico
 CloseApplications=no
 
 [Languages]
@@ -35,11 +37,20 @@ Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
+[Tasks]
+Name: "desktopicon"; Description: "Criar atalho do Monitor de Impressão na área de trabalho"
+
+[Icons]
+; O Monitor de Impressão é uma página local servida pelo próprio agente (http://127.0.0.1:17800).
+Name: "{autoprograms}\Monitor de Impressão Rangasso"; Filename: "{app}\MonitorImpressao.url"; IconFilename: "{app}\rangasso.ico"
+Name: "{autodesktop}\Monitor de Impressão Rangasso"; Filename: "{app}\MonitorImpressao.url"; IconFilename: "{app}\rangasso.ico"; Tasks: desktopicon
+
 [Run]
 ; Configura (se informado), registra o serviço e inicia. install.ps1 roda da própria pasta {app}: não copia nada.
 Filename: "powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -Quiet {code:SetupArgs}"; \
   StatusMsg: "Registrando o serviço do Windows..."; Flags: runhidden waituntilterminated
+Filename: "{app}\MonitorImpressao.url"; Description: "Abrir o Monitor de Impressão"; Flags: postinstall shellexec nowait skipifsilent
 
 [UninstallRun]
 Filename: "{app}\RangassoAgent.exe"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopSvc"
@@ -58,9 +69,9 @@ procedure InitializeWizard;
 begin
   ConfigPage := CreateInputQueryPage(wpWelcome,
     'Conexão com o sistema',
-    'Informe o endereço do sistema e a chave do agente.',
+    'Informe o endereço do sistema e a chave do agente (opcional agora).',
     'A chave é gerada no painel em Configurações > Impressora > + Credencial de agente. ' +
-    'A impressora (USB ou rede) é escolhida no painel.');
+    'Se preferir, deixe em branco e configure depois pelo Monitor de Impressão, que abre no fim da instalação.');
   ConfigPage.Add('Endereço do sistema (https://...):', False);
   ConfigPage.Add('Chave do agente (rgd_...):', False);
 end;
@@ -74,7 +85,7 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if CurPageID = ConfigPage.ID then
+  if (CurPageID = ConfigPage.ID) and ((Trim(ConfigPage.Values[0]) <> '') or (Trim(ConfigPage.Values[1]) <> '')) then
   begin
     if (Pos('https://', Lowercase(Trim(ConfigPage.Values[0]))) <> 1) then
     begin
@@ -91,7 +102,7 @@ end;
 
 function SetupArgs(Param: String): String;
 begin
-  if ConfigExists() then
+  if ConfigExists() or (Trim(ConfigPage.Values[0]) = '') then
     Result := ''
   else
     Result := '-ServerUrl "' + Trim(ConfigPage.Values[0]) + '" -Token "' + Trim(ConfigPage.Values[1]) + '"';
