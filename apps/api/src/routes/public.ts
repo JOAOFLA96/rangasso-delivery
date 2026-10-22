@@ -10,6 +10,20 @@ import { imageUrl, publicMenu } from '../services/menu.js';
 import { createOrder, createOrderSchema, getOrderDetail, quote, STATUS_LABELS, PAYMENT_LABELS } from '../services/orders.js';
 import { currentStoreId, getOpenState, getSettings } from '../services/store.js';
 import { WEEKDAY_NAMES_PT } from '../services/storeHours.js';
+import { savePushSubscription, vapidKeys } from '../services/push.js';
+import { processImage, storeImage } from '../lib/uploads.js';
+import { AppError, badRequest } from '../lib/errors.js';
+import { cleanText } from '../lib/text.js';
+
+const TOKEN_RE = /^[A-Za-z0-9_-]{20,64}$/;
+
+async function orderByToken(token: string) {
+  if (!TOKEN_RE.test(token)) throw notFound('Pedido');
+  const storeId = await currentStoreId();
+  const r = await pool.query('SELECT id, status FROM orders WHERE public_token = $1 AND store_id = $2', [token, storeId]);
+  if (!r.rows[0]) throw notFound('Pedido');
+  return { storeId, id: r.rows[0].id as string, status: r.rows[0].status as string };
+}
 
 export async function publicRoutes(app: FastifyInstance) {
   app.get('/store', async () => {
@@ -87,11 +101,9 @@ export async function publicRoutes(app: FastifyInstance) {
 
   // Acompanhamento pelo cliente: acesso só com o token aleatório do pedido.
   app.get<{ Params: { token: string } }>('/orders/:token', async (req, reply) => {
-    if (!/^[A-Za-z0-9_-]{20,64}$/.test(req.params.token)) throw notFound('Pedido');
-    const storeId = await currentStoreId();
-    const r = await pool.query('SELECT id FROM orders WHERE public_token = $1 AND store_id = $2', [req.params.token, storeId]);
-    if (!r.rows[0]) throw notFound('Pedido');
-    const o = await getOrderDetail(pool, storeId, r.rows[0].id);
+    const { storeId, id } = await orderByToken(req.params.token);
+    const o = await getOrderDetail(pool, storeId, id);
+    const rv = (await pool.query('SELECT rating, comment, photo_path, created_at FROM order_reviews WHERE order_id = $1', [id])).rows[0];
     reply.header('cache-control', 'no-store');
     return {
       number: o.number,
@@ -113,6 +125,54 @@ export async function publicRoutes(app: FastifyInstance) {
       payment: PAYMENT_LABELS[o.payment_method],
       changeForCents: o.change_for_cents,
       cancelReason: o.status === 'cancelled' ? o.cancel_reason : null,
+      canReview: o.status === 'completed' && !rv,
+      review: rv ? { rating: rv.rating, comment: rv.comment, photoUrl: imageUrl(rv.photo_path), createdAt: rv.created_at } : null,
     };
+  });
+
+  // Avisos no celular (Web Push): chave pública e inscrição para um pedido.
+  app.get('/push/key', async () => ({ publicKey: (await vapidKeys()).publicKey }));
+
+  app.post<{ Params: { token: string } }>('/orders/:token/push', { config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req) => {
+    const { storeId, id, status } = await orderByToken(req.params.token);
+    const sub = parse(
+      z.object({
+        endpoint: z.string().url().max(1000).refine((u) => u.startsWith('https://'), 'Endereço de aviso inválido.'),
+        keys: z.object({ p256dh: z.string().min(20).max(200), auth: z.string().min(8).max(100) }),
+      }),
+      req.body,
+    );
+    if (status === 'completed' || status === 'cancelled') throw badRequest('order_closed', 'Este pedido já foi encerrado.');
+    await savePushSubscription(pool, storeId, id, sub);
+    return { ok: true };
+  });
+
+  // Avaliação depois da entrega: nota de 1 a 5, comentário e foto opcionais (multipart).
+  app.post<{ Params: { token: string } }>('/orders/:token/review', { config: { rateLimit: { max: 10, timeWindow: '10 minutes' } } }, async (req, reply) => {
+    const { storeId, id, status } = await orderByToken(req.params.token);
+    if (status !== 'completed') throw badRequest('not_delivered', 'Você poderá avaliar quando o pedido for entregue.');
+    if ((await pool.query('SELECT 1 FROM order_reviews WHERE order_id = $1', [id])).rowCount) throw new AppError(409, 'already_reviewed', 'Este pedido já foi avaliado. Obrigado!');
+    const fields: Record<string, string> = {};
+    let photo: Buffer | null = null;
+    if (req.isMultipart()) {
+      for await (const part of req.parts({ limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 5, fieldSize: 2000 } })) {
+        if (part.type === 'file') {
+          const buf = await part.toBuffer();
+          if (part.file.truncated) throw badRequest('file_too_large', 'Foto maior que 8 MB.');
+          if (buf.length) photo = buf;
+        } else fields[part.fieldname] = String(part.value ?? '');
+      }
+    } else Object.assign(fields, req.body ?? {});
+    const b = parse(z.object({ rating: z.coerce.number().int().min(1).max(5), comment: z.string().max(1000).optional().default('') }), fields);
+    const photoPath = photo ? await storeImage('reviews', await processImage(photo, 1200)) : null;
+    try {
+      await pool.query('INSERT INTO order_reviews (store_id, order_id, rating, comment, photo_path) VALUES ($1,$2,$3,$4,$5)', [storeId, id, b.rating, cleanText(b.comment, 1000), photoPath]);
+    } catch (e: any) {
+      if (e?.code === '23505') throw new AppError(409, 'already_reviewed', 'Este pedido já foi avaliado. Obrigado!');
+      throw e;
+    }
+    emitStoreEvent(storeId, { type: 'review.created', orderId: id });
+    reply.code(201);
+    return { ok: true };
   });
 }

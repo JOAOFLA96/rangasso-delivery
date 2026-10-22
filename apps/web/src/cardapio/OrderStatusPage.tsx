@@ -1,15 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, brl, formatDateTime } from '../lib/api';
 import { StoreHeader } from './Header';
+import { enablePush, fetchOrder, iosNeedsHomeScreen, isActive, myOrders, pushEnabledFor, pushSupported, rememberOrder, type PublicOrder } from './orderStore';
 import type { StoreInfo } from './types';
-
-interface PublicOrder {
-  number: number; status: string; statusLabel: string; createdAt: string; customerName: string; address: string;
-  items: { quantity: number; name: string; lineTotalCents: number; notes: string; addons: string[] }[];
-  subtotalCents: number; deliveryFeeCents: number; deliveryFeePending?: boolean; deliveryDistanceKm?: number | null; discountCents: number; totalCents: number; payment: string;
-  changeForCents: number | null; cancelReason: string | null;
-}
 
 const STEPS = [
   ['received', 'Recebido'],
@@ -27,8 +21,14 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
   useEffect(() => {
     let alive = true;
     const load = () =>
-      api<PublicOrder>(`/api/public/orders/${token}`)
-        .then((o) => alive && (setOrder(o), setError(null)))
+      fetchOrder(token!)
+        .then((o) => {
+          if (!alive) return;
+          setOrder(o);
+          setError(null);
+          // Aberto por link (WhatsApp, outro aparelho): passa a aparecer em "Meus pedidos" aqui também.
+          if (!myOrders().some((x) => x.token === token)) rememberOrder({ token: token!, number: o.number, at: o.createdAt });
+        })
         .catch((e) => alive && setError(e.message));
     load();
     const t = setInterval(load, 20_000);
@@ -70,6 +70,9 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
           </ol>
         )}
 
+        {isActive(order.status) && <PushCard token={token!} />}
+        {(order.canReview || order.review) && <ReviewCard token={token!} order={order} onDone={() => fetchOrder(token!).then(setOrder)} />}
+
         <section className="card">
           <h2>Resumo</h2>
           <ul className="cart-lines">
@@ -100,8 +103,128 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
             {whatsapp ? <a href={`https://wa.me/55${whatsapp}?text=${encodeURIComponent(`Olá! Sobre o pedido #${order.number}`)}`} target="_blank" rel="noreferrer">Fale no WhatsApp</a> : <a href={`tel:${store.phone.replace(/\D/g, '')}`}>{store.phone}</a>}
           </p>
         )}
-        <p className="center"><Link to="/cardapio" className="btn btn-secondary">Voltar ao cardápio</Link></p>
+        <p className="center">
+          <Link to="/cardapio" className="btn btn-secondary">Voltar ao cardápio</Link>{' '}
+          <Link to="/cardapio/pedidos" className="btn btn-secondary">Meus pedidos</Link>
+        </p>
       </main>
     </div>
+  );
+}
+
+function PushCard({ token }: { token: string }) {
+  const [on, setOn] = useState(() => pushEnabledFor(token));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (on) return <p className="alert alert-ok small" role="status">🔔 Avisos ativados: você recebe uma notificação quando o pedido for aceito e quando sair para entrega.</p>;
+  if (!pushSupported()) {
+    return iosNeedsHomeScreen() ? (
+      <p className="alert alert-info small">
+        🔔 Para receber avisos no iPhone: toque em <strong>Compartilhar</strong> › <strong>Adicionar à Tela de Início</strong>, abra o Rangasso por lá e
+        ative os avisos nesta página. Enquanto isso, esta página se atualiza sozinha.
+      </p>
+    ) : null;
+  }
+  async function activate() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await enablePush(token);
+      setOn(true);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="card push-card">
+      <p><strong>Quer ser avisado no celular?</strong> Mandamos uma notificação quando o pedido for aceito e quando sair para entrega.</p>
+      <button type="button" className="btn btn-primary" onClick={activate} disabled={busy}>{busy ? 'Ativando…' : '🔔 Ativar avisos'}</button>
+      {err && <p className="field-error" role="alert">{err}</p>}
+    </section>
+  );
+}
+
+const STAR_LABELS = ['', 'Ruim', 'Regular', 'Bom', 'Muito bom', 'Excelente'];
+
+export function Stars({ value, size = 'md' }: { value: number; size?: 'sm' | 'md' }) {
+  return (
+    <span className={`stars stars-${size}`} role="img" aria-label={`${value} de 5 estrelas`}>
+      {[1, 2, 3, 4, 5].map((n) => <span key={n} className={n <= value ? 'on' : ''} aria-hidden="true">★</span>)}
+    </span>
+  );
+}
+
+function ReviewCard({ token, order, onDone }: { token: string; order: PublicOrder; onDone: () => void }) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState('');
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!photo) return setPreview(null);
+    const u = URL.createObjectURL(photo);
+    setPreview(u);
+    return () => URL.revokeObjectURL(u);
+  }, [photo]);
+
+  if (order.review) {
+    return (
+      <section className="card review-card">
+        <h2>Sua avaliação</h2>
+        <Stars value={order.review.rating} />
+        {order.review.comment && <p>{order.review.comment}</p>}
+        {order.review.photoUrl && <img className="review-photo" src={order.review.photoUrl} alt="Foto enviada na avaliação" />}
+        <p className="muted small">Obrigado por avaliar!</p>
+      </section>
+    );
+  }
+
+  async function submit(ev: FormEvent) {
+    ev.preventDefault();
+    if (!rating) return setErr('Escolha de 1 a 5 estrelas.');
+    if (photo && photo.size > 8 * 1024 * 1024) return setErr('Foto maior que 8 MB.');
+    const form = new FormData();
+    form.append('rating', String(rating));
+    form.append('comment', comment.trim());
+    if (photo) form.append('photo', photo);
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/api/public/orders/${token}/review`, { form });
+      onDone();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card review-card">
+      <h2>Como foi seu pedido?</h2>
+      <form onSubmit={submit}>
+        <div className="star-input" role="radiogroup" aria-label="Nota de 1 a 5 estrelas">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button key={n} type="button" role="radio" aria-checked={rating === n} aria-label={`${n} estrela${n > 1 ? 's' : ''}: ${STAR_LABELS[n]}`}
+              className={n <= rating ? 'on' : ''} onClick={() => setRating(n)}>★</button>
+          ))}
+          {rating > 0 && <span className="muted small">{STAR_LABELS[rating]}</span>}
+        </div>
+        <label className="field">
+          <span>Comentário <em className="muted">(opcional)</em></span>
+          <textarea id="f-review-comment" rows={3} maxLength={1000} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Conte o que achou do lanche e da entrega" />
+        </label>
+        <label className="field">
+          <span>Foto <em className="muted">(opcional)</em></span>
+          <input id="f-review-photo" type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
+        </label>
+        {preview && <img className="review-photo" src={preview} alt="Prévia da foto" />}
+        {err && <p className="field-error" role="alert">{err}</p>}
+        <button className="btn btn-primary btn-block" type="submit" disabled={busy}>{busy ? 'Enviando…' : 'Enviar avaliação'}</button>
+      </form>
+    </section>
   );
 }

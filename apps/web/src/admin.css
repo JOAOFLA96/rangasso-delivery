@@ -166,3 +166,5 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
   .a-prod-actions { width: 100%; justify-content: flex-start; }
   .a-hours-day { grid-template-columns: 1fr; }
 }
+.a-main { padding: 16px 20px 64px; max-width: 900px; margin: 0 auto; }
+@media (max-width: 700px) { .a-main { padding: 12px 12px 64px; } }

@@ -5,12 +5,12 @@ import type { MenuData } from './CardapioApp';
 import { useCart } from './cart';
 import { CartLines } from './CartSheet';
 import { StoreHeader } from './Header';
+import { rememberOrder } from './orderStore';
 
 interface Quote { subtotalCents: number; deliveryFeeCents: number | null; deliveryFeePending?: boolean; deliveryDistanceKm?: number | null; discountCents: number; totalCents: number | null; promoSavingsCents: number; minOrderCents: number; belowMinimum: boolean }
 interface SavedCustomer { name: string; phone: string; cep: string; street: string; number: string; neighborhoodId: string; neighborhoodName?: string; city?: string; state?: string; complement: string; reference: string }
 
 const SAVED_KEY = 'rangasso.customer.v1';
-const ORDERS_KEY = 'rangasso.orders.v1';
 // Valor do select para um bairro fora da lista (vem do CEP ou digitado); a taxa fica a combinar.
 const NEW_HOOD = '__new__';
 
@@ -174,7 +174,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       } else {
         storage.set(SAVED_KEY, null);
       }
-      storage.set(ORDERS_KEY, [{ token: res.token, number: res.number, at: new Date().toISOString() }, ...storage.get<any[]>(ORDERS_KEY, [])].slice(0, 10));
+      rememberOrder({ token: res.token, number: res.number, at: new Date().toISOString() });
       cart.clear();
       navigate(`/cardapio/pedido/${res.token}`, { replace: true });
     } catch (e) {

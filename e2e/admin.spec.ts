@@ -163,3 +163,10 @@ test('histórico com filtros e logout', async ({ page, request }) => {
   await page.goto('/admin/pedidos');
   await expect(page).toHaveURL(/\/admin\/login/);
 });
+
+test('avaliações aparecem no painel', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Avaliações' }).click();
+  await expect(page.getByRole('heading', { name: 'Avaliações dos clientes' })).toBeVisible();
+  await noHorizontalScroll(page);
+});

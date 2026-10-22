@@ -5,6 +5,7 @@ import { SessionCtx, ROLE_LABELS, type AdminUser } from './session';
 import { ToastProvider } from './ui';
 import { OrdersTab } from './OrdersTab';
 import { SettingsTab } from './settings/SettingsTab';
+import { ReviewsTab } from './ReviewsTab';
 import '../admin.css';
 
 export default function AdminApp() {
@@ -40,6 +41,7 @@ export default function AdminApp() {
             <img src="/brand/logo-rangasso-trim.png" alt="Rangasso" className="a-logo" />
             <nav className="a-tabs" aria-label="Seções">
               <NavLink to="/admin/pedidos">Pedidos</NavLink>
+              <NavLink to="/admin/avaliacoes">Avaliações</NavLink>
               <NavLink to="/admin/configuracoes">Configurações</NavLink>
             </nav>
             <div className="a-user">
@@ -49,6 +51,7 @@ export default function AdminApp() {
           </header>
           <Routes>
             <Route path="pedidos/*" element={<OrdersTab />} />
+            <Route path="avaliacoes" element={<ReviewsTab />} />
             <Route path="configuracoes/*" element={<SettingsTab />} />
             <Route path="*" element={<Navigate to="/admin/pedidos" replace />} />
           </Routes>

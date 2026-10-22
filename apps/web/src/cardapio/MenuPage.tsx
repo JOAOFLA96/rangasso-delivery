@@ -1,3 +1,5 @@
+import { RecentOrders } from './MyOrders';
+import { myOrders } from './orderStore';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { brl, normalize } from '../lib/api';
@@ -59,9 +61,11 @@ export function MenuPage({ data }: { data: MenuData }) {
             <span> Você pode ver o cardápio, mas os pedidos estão pausados.</span>
           </div>
         )}
+        <RecentOrders />
         {store.menuMessage && <p className="c-message">{store.menuMessage}</p>}
         <div className="c-info-row">
           {store.minOrderCents > 0 && <span>Pedido mínimo {brl(store.minOrderCents)}</span>}
+          {myOrders().length > 0 && <Link to="/cardapio/pedidos">Meus pedidos</Link>}
           <Link to="/cardapio/privacidade">Privacidade</Link>
         </div>
 

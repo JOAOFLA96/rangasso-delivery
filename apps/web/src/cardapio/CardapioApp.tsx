@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { CartProvider } from './cart';
 import { MenuPage } from './MenuPage';
 import { CheckoutPage } from './CheckoutPage';
+import { MyOrdersPage } from './MyOrders';
 import { OrderStatusPage } from './OrderStatusPage';
 import { PrivacyPage } from './PrivacyPage';
 import type { Category, StoreInfo } from './types';
@@ -60,6 +61,7 @@ export function CardapioApp() {
         <Route index element={<MenuPage data={data} />} />
         <Route path="checkout" element={<CheckoutPage data={data} reload={load} />} />
         <Route path="pedido/:token" element={<OrderStatusPage store={data.store} />} />
+        <Route path="pedidos" element={<MyOrdersPage store={data.store} />} />
         <Route path="privacidade" element={<PrivacyPage store={data.store} />} />
         <Route path="*" element={<MenuPage data={data} />} />
       </Routes>

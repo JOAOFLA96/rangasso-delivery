@@ -188,3 +188,42 @@ test('taxa por km: calcula pela distância do endereço até a loja', async ({ p
     await db.query(`UPDATE store_settings SET delivery_fee_mode = 'neighborhood'`);
   }
 });
+
+test('cliente vê seus pedidos ao voltar e avalia com estrelas, comentário e foto', async ({ page, request }) => {
+  const prod = (await db.query(`SELECT id FROM products WHERE name = 'Batata frita (teste)'`)).rows[0].id;
+  const hood = (await db.query(`SELECT id FROM neighborhoods WHERE active ORDER BY name LIMIT 1`)).rows[0].id;
+  const res = await request.post('/api/public/orders', {
+    data: {
+      idempotencyKey: `e2e-review-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      customer: { name: 'Avaliadora E2E', phone: '(11) 97777-6666' },
+      address: { street: 'Rua das Estrelas', number: '5', neighborhoodId: hood },
+      payment: { method: 'pix' }, items: [{ productId: prod, quantity: 1 }], acceptPrivacy: true,
+    },
+  });
+  expect(res.status()).toBe(201);
+  const { token, number } = await res.json();
+
+  // Abrir o link do pedido guarda o pedido neste aparelho.
+  await page.goto(`/cardapio/pedido/${token}`);
+  await expect(page.getByText(`#${number}`)).toBeVisible();
+  await page.goto('/cardapio');
+  await expect(page.locator('.recent-order', { hasText: `Pedido #${number}` })).toContainText('Acompanhar');
+
+  await db.query(`UPDATE orders SET status = 'completed' WHERE public_token = $1`, [token]);
+  await page.reload();
+  await page.locator('.recent-order', { hasText: `Pedido #${number}` }).click();
+  await expect(page.getByRole('heading', { name: 'Como foi seu pedido?' })).toBeVisible();
+  await page.getByRole('button', { name: 'Enviar avaliação' }).click();
+  await expect(page.getByText('Escolha de 1 a 5 estrelas.')).toBeVisible();
+  await page.getByRole('radio', { name: /^5 estrelas/ }).click();
+  await page.getByLabel(/Comentário/).fill('Batata sequinha, chegou quente!');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACgAAAAeCAIAAADRv8uKAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAPUlEQVRIie3VQQ0AMAwCwHnCE/LRMBnb45L+mzSUO2uezLG4Tj3hineqApnKDCSKxWCxWBwWg8VicV+xeAHPJik68N4GLgAAAABJRU5ErkJggg==', 'base64');
+  await page.locator('#f-review-photo').setInputFiles({ name: 'foto.png', mimeType: 'image/png', buffer: png });
+  await page.getByRole('button', { name: 'Enviar avaliação' }).click();
+  await expect(page.getByRole('heading', { name: 'Sua avaliação' })).toBeVisible();
+  await expect(page.getByRole('img', { name: '5 de 5 estrelas' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Foto enviada na avaliação' })).toBeVisible();
+
+  await page.goto('/cardapio/pedidos');
+  await expect(page.locator('.my-order', { hasText: `Pedido #${number}` })).toContainText('Você avaliou: ★★★★★');
+});

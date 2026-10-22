@@ -190,3 +190,31 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
   .c-shell { padding-bottom: 110px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto !important; } }
+
+/* Pedidos do cliente, avisos e avaliação */
+.recent-orders { display: grid; gap: 8px; margin: 12px 0; }
+.recent-order { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius); background: #fff; border: 1px solid var(--line, #e7e2dc); color: var(--ink); text-decoration: none; min-height: 48px; }
+.recent-order.active { border-color: var(--brand-strong); background: var(--brand-soft); }
+.ro-action { color: var(--brand-strong); font-weight: 700; white-space: nowrap; }
+.my-orders { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.my-order { display: grid; gap: 4px; color: var(--ink); text-decoration: none; }
+.my-order > div { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.push-card p { margin-top: 0; }
+.stars { color: #d6d0c9; letter-spacing: 2px; }
+.stars .on { color: #f2a900; }
+.stars-md { font-size: 1.4rem; }
+.stars-sm { font-size: 1rem; }
+.star-input { display: flex; align-items: center; gap: 4px; margin: 4px 0 12px; flex-wrap: wrap; }
+.star-input button { font-size: 2.2rem; line-height: 1; background: none; border: none; padding: 2px 4px; min-width: 44px; min-height: 44px; color: #d6d0c9; cursor: pointer; }
+.star-input button.on { color: #f2a900; }
+.star-input button:focus-visible { outline: 2px solid var(--brand-strong); border-radius: 8px; }
+.review-photo { display: block; max-width: 100%; max-height: 320px; border-radius: var(--radius); margin: 8px 0; object-fit: cover; }
+.review-list { list-style: none; padding: 0; display: grid; gap: 12px; }
+.review-item.hidden-review { opacity: .55; }
+.review-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; }
+.rating-summary { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+.rating-big { font-size: 2.4rem; font-weight: 800; line-height: 1; }
+.rating-bars { display: grid; gap: 4px; min-width: 200px; flex: 1; max-width: 360px; }
+.rating-bar { display: grid; grid-template-columns: 28px 1fr 32px; gap: 8px; align-items: center; font-size: .85rem; }
+.rating-bar > div { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; }
+.rating-bar > div > span { display: block; height: 100%; background: #f2a900; }

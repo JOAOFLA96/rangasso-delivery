@@ -7,7 +7,8 @@ export type StoreEvent =
   | { type: 'order.updated'; orderId: string; number: number }
   | { type: 'print.updated'; jobId: string; orderId: string | null }
   | { type: 'print.queued'; jobId: string }
-  | { type: 'agent.updated'; deviceId: string };
+  | { type: 'agent.updated'; deviceId: string }
+  | { type: 'review.created'; orderId: string };
 
 const bus = new EventEmitter();
 bus.setMaxListeners(1000);
