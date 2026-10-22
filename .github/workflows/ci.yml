@@ -110,7 +110,7 @@ jobs:
           path: |
             apps/agent/dist/RangassoAgentSetup-*.exe
             apps/agent/dist/RangassoAgent-*-win-x64.zip
-          retention-days: 14
+          retention-days: 90
 
   deploy-check:
     runs-on: ubuntu-latest
