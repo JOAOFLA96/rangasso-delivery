@@ -162,4 +162,7 @@ jobs:
           curl -sf localhost:3000/api/public/store
           curl -sf -o /dev/null localhost:3000/cardapio
           curl -sf -o /dev/null localhost:3000/brand/logo-rangasso.png
+          # A imagem leva o agente para a atualização automática dos PCs da loja.
+          docker exec app cat /app/agent/agent-version.json
+          docker exec app test -s /app/agent/agent.cjs
           docker logs app | tail -20

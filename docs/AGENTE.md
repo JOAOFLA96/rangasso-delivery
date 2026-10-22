@@ -92,7 +92,8 @@ Por padrão (`"mode": "auto"`), a impressora é a definida no painel, e mudança
 
 ## Atualizar e desinstalar
 
-- **Atualizar:** rode o instalador da versão nova. A configuração e a fila local são mantidas.
+- **Atualização automática (a partir da 1.4.0):** o agente pergunta ao site, 2 minutos depois de iniciar e a cada 6 horas, se há versão nova. O site publica o agente da mesma versão dele (vem junto no deploy). Se houver, o agente baixa o `agent.cjs`, confere o SHA-256, grava em `C:\ProgramData\RangassoAgent\update\` e reinicia o serviço (cerca de 10 s sem imprimir; a fila do servidor espera). Se a versão nova não conseguir se conectar em 3 partidas seguidas, é descartada e volta a valer a versão instalada. Só funciona com `https://` (ou localhost). Para desligar, defina a variável `RANGASSO_NO_AUTO_UPDATE=1` no serviço. A versão em uso aparece no Monitor e no painel (Configurações > Impressora).
+- **Atualizar pelo instalador:** rode o instalador da versão nova por cima. A configuração e a fila local são mantidas; se o instalador for mais novo que a atualização baixada, vale o instalador.
 - **Trocar a chave:** gere outra no painel, revogue a antiga e rode `install.ps1 -Token rgd_NOVA` (ou `rangasso-agent setup --token rgd_NOVA`) e reinicie o serviço.
 - **Desinstalar:** use *Painel de Controle > Programas*, ou rode `uninstall.ps1` (com `-RemoveData` para apagar também a configuração e os logs).
 

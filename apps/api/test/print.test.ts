@@ -1,4 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { resetDb, seed, makeApp, orderBody, loginAs, pool, type Fixture } from './helpers.js';
 
 let app: Awaited<ReturnType<typeof makeApp>>;
@@ -27,6 +29,16 @@ const newOrder = async () => (await app.inject({ method: 'POST', url: '/api/publ
 const orderPrint = async (n: number) => (await pool.query('SELECT print_status FROM orders WHERE number = $1', [n])).rows[0].print_status;
 
 describe('agente de impressão', () => {
+  it('atualização automática: informa a versão publicada e entrega o agent.cjs só com credencial', async () => {
+    const content = readFileSync(new URL('./fixtures/agent-bundle/agent.cjs', import.meta.url));
+    const info = await app.inject({ method: 'GET', url: '/api/agent/update', headers: agent });
+    expect(info.json()).toEqual({ version: '9.9.9', sha256: createHash('sha256').update(content).digest('hex'), size: content.length });
+    const dl = await app.inject({ method: 'GET', url: '/api/agent/update/agent.cjs', headers: agent });
+    expect(dl.statusCode).toBe(200);
+    expect(dl.rawPayload.equals(content)).toBe(true);
+    expect((await app.inject({ method: 'GET', url: '/api/agent/update/agent.cjs' })).statusCode).toBe(401);
+  });
+
   it('sem credencial válida não acessa nada', async () => {
     expect((await claim({ authorization: 'Bearer rgd_invalido_invalido_invalido' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/api/agent/jobs?wait=0' })).statusCode).toBe(401);

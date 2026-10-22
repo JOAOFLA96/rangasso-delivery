@@ -6,11 +6,11 @@ Este documento separa o que foi **executado** (com resultado) do que foi **simul
 
 | Conjunto | Comando | Resultado | O que cobre |
 | --- | --- | --- | --- |
-| API | `npm -w apps/api test` | 77/77 passando | Cálculo no servidor, idempotência, estoque, bairros/taxas, bairro novo pelo CEP (taxa a combinar), taxa por km (faixas, fora do raio, mapa fora do ar, cache), horário (inclusive madrugada), login, bloqueio por tentativas, papéis, CSRF, fila de impressão, retentativas, leases, revogação, auditoria |
-| Agente | `npm -w apps/agent test` | 42/42 passando (Linux) | Comanda ESC/POS (larguras, acentos CP860, vias, corte), diário local, anti-duplicação, sem papel, tampa aberta, queda de conexão, impressora sem status |
+| API | `npm -w apps/api test` | 78/78 passando | Cálculo no servidor, idempotência, estoque, bairros/taxas, bairro novo pelo CEP (taxa a combinar), taxa por km (faixas, fora do raio, mapa fora do ar, cache), horário (inclusive madrugada), login, bloqueio por tentativas, papéis, CSRF, fila de impressão, retentativas, leases, revogação, auditoria |
+| Agente | `npm -w apps/agent test` | 47/47 passando (Linux) | Comanda ESC/POS (larguras, acentos CP860, vias, corte), diário local, anti-duplicação, sem papel, tampa aberta, queda de conexão, impressora sem status |
 | Integração | `npm -w apps/agent run test:integration` | 10/10 passando | API real + PostgreSQL + agente compilado + impressora TCP simulada (cenários abaixo) |
 | Navegador | `npx playwright test` (com a API no ar) | 44/44 passando | Cardápio (inclusive CEP preenchendo rua e bairro e taxa por km) e painel em 4 perfis: Android (Pixel 7), iPhone 13 (emulado no Chromium), tablet e desktop |
-| Windows | job `agent-windows` do CI | ver resultado no PR | Testes do agente no Windows, instalador Inno Setup, instalação silenciosa, serviço, impressão pelo spooler real (porta em arquivo), reinício automático, desinstalação |
+| Windows | job `agent-windows` do CI | ver resultado no PR | Testes do agente no Windows, instalador Inno Setup, instalação silenciosa, serviço, impressão pelo spooler real (porta em arquivo), reinício automático, atualização automática (servidor falso oferece versão nova; serviço reinicia na versão baixada), desinstalação |
 | Implantação | job `deploy-check` do CI | ver resultado no PR | Imagem Docker, Compose, Caddyfile, container sobe/migra/serve, criação do primeiro admin |
 
 ### Cenários de integração (pedido → painel → agente → impressora simulada)
