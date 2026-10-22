@@ -39,12 +39,12 @@ function DeliveryRules({ data, reload }: { data: SettingsData; reload: () => Pro
   const { user } = useSession();
   const toast = useToast();
   const s = data.settings;
-  const [f, setF] = useState({ minOrder: centsToInput(s.minOrderCents), etaMin: String(s.etaMinMinutes), etaMax: String(s.etaMaxMinutes), openMode: s.openMode });
+  const [f, setF] = useState({ minOrder: centsToInput(s.minOrderCents), etaMin: String(s.etaMinMinutes), etaMax: String(s.etaMaxMinutes), openMode: s.openMode, acceptUnlisted: s.acceptUnlistedNeighborhoods !== false });
   async function save() {
     const minOrderCents = inputToCents(f.minOrder) ?? 0;
     if (Number.isNaN(minOrderCents)) return toast('Pedido mínimo inválido.', 'error');
     try {
-      await api('/api/admin/settings/delivery', { method: 'PUT', body: { minOrderCents, etaMinMinutes: Number(f.etaMin), etaMaxMinutes: Number(f.etaMax), openMode: f.openMode } });
+      await api('/api/admin/settings/delivery', { method: 'PUT', body: { minOrderCents, etaMinMinutes: Number(f.etaMin), etaMaxMinutes: Number(f.etaMax), openMode: f.openMode, acceptUnlistedNeighborhoods: f.acceptUnlisted } });
       toast('Regras de entrega salvas');
       reload();
     } catch (e) {
@@ -67,6 +67,7 @@ function DeliveryRules({ data, reload }: { data: SettingsData; reload: () => Pro
           <option value="force_open">Abrir agora, ignorando o horário</option>
         </select>
       </label>
+      <Toggle checked={f.acceptUnlisted} disabled={disabled} onChange={(v) => setF({ ...f, acceptUnlisted: v })} label="Aceitar pedidos de bairros fora da lista (o CEP preenche o bairro e a taxa fica a combinar)" />
       {!disabled && <button className="btn btn-primary" onClick={save}>Salvar regras</button>}
     </section>
   );
@@ -81,15 +82,18 @@ function Neighborhoods({ data, reload }: { data: SettingsData; reload: () => Pro
         <h3>Bairros atendidos e taxas</h3>
         {canManage(user) && <button className="btn btn-primary btn-sm" onClick={() => setEdit({ name: '', city: '', feeCents: 0, minOrderCents: null, active: true })}>+ Bairro</button>}
       </div>
-      <p className="muted small">O cliente escolhe o bairro na lista; a taxa vem daqui e é conferida de novo pelo servidor. Bairro desativado = região não atendida.</p>
-      {!data.neighborhoods.length && <p className="alert alert-warning">Nenhum bairro cadastrado: sem bairro, o cliente não consegue finalizar pedidos.</p>}
+      <p className="muted small">O CEP do cliente preenche o bairro sozinho. Bairro novo entra aqui marcado "taxa a definir": edite e coloque a taxa. Bairro desativado = região não atendida.</p>
+      {data.neighborhoods.some((n) => n.feePending && n.active) && (
+        <p className="alert alert-warning">Há bairros novos sem taxa definida. Os pedidos deles saem com a taxa "a combinar" até você editar o bairro.</p>
+      )}
+      {!data.neighborhoods.length && !data.settings.acceptUnlistedNeighborhoods && <p className="alert alert-warning">Nenhum bairro cadastrado: sem bairro, o cliente não consegue finalizar pedidos.</p>}
       <table className="a-table">
         <thead><tr><th>Bairro</th><th>Taxa</th><th>Mín. próprio</th><th>Situação</th><th /></tr></thead>
         <tbody>
           {data.neighborhoods.map((n) => (
             <tr key={n.id} className={n.active ? '' : 'inactive'}>
               <td>{n.name}{n.city ? <span className="muted small"> · {n.city}</span> : null}</td>
-              <td>{brl(n.feeCents)}</td>
+              <td>{n.feePending ? <span className="badge badge-warning">Taxa a definir</span> : brl(n.feeCents)}</td>
               <td>{n.minOrderCents != null ? brl(n.minOrderCents) : '—'}</td>
               <td>{n.active ? 'Atendido' : 'Não atendido'}</td>
               <td>{canManage(user) && <button className="btn btn-secondary btn-sm" onClick={() => setEdit(n)}>Editar</button>}</td>
@@ -104,7 +108,7 @@ function Neighborhoods({ data, reload }: { data: SettingsData; reload: () => Pro
 
 function NeighborhoodModal({ n, onClose, onSaved }: { n: Partial<SettingsData['neighborhoods'][number]>; onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
-  const [f, setF] = useState({ name: n.name ?? '', city: n.city ?? '', fee: centsToInput(n.feeCents ?? 0), min: centsToInput(n.minOrderCents ?? null), active: n.active ?? true });
+  const [f, setF] = useState({ name: n.name ?? '', city: n.city ?? '', fee: n.feePending ? '' : centsToInput(n.feeCents ?? 0), min: centsToInput(n.minOrderCents ?? null), active: n.active ?? true });
   async function save() {
     const feeCents = inputToCents(f.fee);
     const minOrderCents = inputToCents(f.min);

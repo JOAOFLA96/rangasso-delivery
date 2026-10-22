@@ -54,6 +54,7 @@ export async function buildReceiptPayload(db: Db, storeId: string, orderId: stri
       })),
       subtotalCents: o.subtotal_cents,
       deliveryFeeCents: o.delivery_fee_cents,
+      deliveryFeePending: o.delivery_fee_pending,
       discountCents: o.discount_cents,
       totalCents: o.total_cents,
       paymentMethod: o.payment_method,

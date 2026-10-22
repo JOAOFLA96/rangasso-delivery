@@ -67,6 +67,15 @@ describe('texto da comanda', () => {
 });
 
 describe('ESC/POS', () => {
+  it('bairro novo sem taxa definida sai como "a combinar"', () => {
+    const p = orderPayload();
+    p.order!.deliveryFeePending = true;
+    p.order!.deliveryFeeCents = 0;
+    const txt = renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 });
+    expect(txt).toMatch(/Taxa de entrega\s+A COMBINAR/);
+    expect(txt).toContain('TOTAL + TAXA');
+  });
+
   it('inicializa, seleciona PC860 e corta uma vez por via', () => {
     const buf = renderEscPos(orderPayload(), { kind: 'original', reprintNumber: 0, copies: 2 });
     expect([...buf.subarray(0, 5)]).toEqual([0x1b, 0x40, 0x1b, 0x74, 3]);

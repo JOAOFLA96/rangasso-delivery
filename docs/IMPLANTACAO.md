@@ -68,7 +68,7 @@ A senha é gerada e mostrada **uma única vez**. Entre em `https://SEU-DOMINIO/a
 
 1. **Dados da loja:** nome, telefone/WhatsApp, endereço, contato de privacidade (LGPD).
 2. **Cardápio:** categorias, produtos, fotos, adicionais, promoções e estoque.
-3. **Entrega e horários:** bairros atendidos com taxa, pedido mínimo, tempo estimado, funcionamento por dia, feriados e fechamentos, modo de abertura.
+3. **Entrega e horários:** bairros atendidos com taxa (o CEP do cliente preenche rua e bairro; bairro fora da lista entra sozinho marcado "taxa a definir" e o pedido sai com a taxa "a combinar" até você editar o bairro; dá para desligar em "Aceitar pedidos de bairros fora da lista"), pedido mínimo, tempo estimado, funcionamento por dia, feriados e fechamentos, modo de abertura.
 4. **Impressora:** conexão, nome ou IP, largura do papel e chave do agente (veja [AGENTE.md](AGENTE.md)).
 5. Faça um pedido de teste pelo celular, acompanhe no painel e confira a comanda impressa.
 

@@ -119,9 +119,9 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
         {o.notes && <div className="note">Observação do pedido: {o.notes}</div>}
         <div className="totals">
           <div><span>Subtotal</span><span>{brl(o.subtotal_cents)}</span></div>
-          <div><span>Taxa de entrega</span><span>{brl(o.delivery_fee_cents)}</span></div>
+          <div><span>Taxa de entrega</span><span>{o.delivery_fee_pending ? <strong>A COMBINAR (bairro sem taxa definida)</strong> : brl(o.delivery_fee_cents)}</span></div>
           {o.discount_cents > 0 && <div><span>Desconto</span><span>− {brl(o.discount_cents)}</span></div>}
-          <div className="total"><span>Total</span><strong>{brl(o.total_cents)}</strong></div>
+          <div className="total"><span>{o.delivery_fee_pending ? 'Total + taxa' : 'Total'}</span><strong>{brl(o.total_cents)}</strong></div>
         </div>
         <p><strong>Pagamento:</strong> {PAYMENT[o.payment_method as keyof typeof PAYMENT]}
           {o.change_for_cents ? ` · troco para ${brl(o.change_for_cents)} (levar ${brl(changeBack)})` : o.payment_method === 'cash' ? ' · sem troco' : ''}</p>

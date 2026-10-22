@@ -17,7 +17,7 @@ export async function publicRoutes(app: FastifyInstance) {
     const s = await getSettings(pool, storeId);
     const state = await getOpenState(pool, storeId, s);
     const hoods = await pool.query(
-      `SELECT id, name, city, fee_cents, min_order_cents FROM neighborhoods WHERE store_id = $1 AND active ORDER BY sort_order, name`,
+      `SELECT id, name, city, fee_cents, min_order_cents, fee_pending FROM neighborhoods WHERE store_id = $1 AND active ORDER BY sort_order, name`,
       [storeId],
     );
     const hours = await pool.query(
@@ -42,7 +42,8 @@ export async function publicRoutes(app: FastifyInstance) {
       closedMessage: state.open ? null : s.closed_message,
       nextOpening: state.nextOpening,
       hours: hours.rows.map((h) => ({ weekday: h.weekday, day: WEEKDAY_NAMES_PT[h.weekday], opensAt: h.opens_at, closesAt: h.closes_at })),
-      neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents })),
+      neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents, feePending: n.fee_pending })),
+      acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods,
     };
   });
 
@@ -54,10 +55,15 @@ export async function publicRoutes(app: FastifyInstance) {
 
   app.post('/quote', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
     const body = parse(
-      z.object({ items: createOrderSchema.shape.items, neighborhoodId: z.string().uuid().nullable().optional() }),
+      z.object({
+        items: createOrderSchema.shape.items,
+        neighborhoodId: z.string().uuid().nullable().optional(),
+        neighborhoodName: z.string().trim().max(80).nullable().optional(),
+        city: z.string().trim().max(80).nullable().optional(),
+      }),
       req.body,
     );
-    return quote(pool, await currentStoreId(), body.items, body.neighborhoodId ?? null);
+    return quote(pool, await currentStoreId(), body.items, { id: body.neighborhoodId, name: body.neighborhoodName, city: body.city });
   });
 
   app.post('/orders', { config: { rateLimit: { max: config.ORDER_RATE_LIMIT, timeWindow: '5 minutes' } } }, async (req, reply) => {
@@ -93,6 +99,7 @@ export async function publicRoutes(app: FastifyInstance) {
       })),
       subtotalCents: o.subtotal_cents,
       deliveryFeeCents: o.delivery_fee_cents,
+      deliveryFeePending: o.delivery_fee_pending,
       discountCents: o.discount_cents,
       totalCents: o.total_cents,
       payment: PAYMENT_LABELS[o.payment_method],

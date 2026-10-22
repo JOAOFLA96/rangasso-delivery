@@ -7,7 +7,7 @@ import type { StoreInfo } from './types';
 interface PublicOrder {
   number: number; status: string; statusLabel: string; createdAt: string; customerName: string; address: string;
   items: { quantity: number; name: string; lineTotalCents: number; notes: string; addons: string[] }[];
-  subtotalCents: number; deliveryFeeCents: number; discountCents: number; totalCents: number; payment: string;
+  subtotalCents: number; deliveryFeeCents: number; deliveryFeePending?: boolean; discountCents: number; totalCents: number; payment: string;
   changeForCents: number | null; cancelReason: string | null;
 }
 
@@ -86,9 +86,9 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
           </ul>
           <div className="totals">
             <div><span>Subtotal</span><span>{brl(order.subtotalCents)}</span></div>
-            <div><span>Taxa de entrega</span><span>{brl(order.deliveryFeeCents)}</span></div>
+            <div><span>Taxa de entrega</span><span>{order.deliveryFeePending ? 'a combinar' : brl(order.deliveryFeeCents)}</span></div>
             {order.discountCents > 0 && <div><span>Desconto</span><span>− {brl(order.discountCents)}</span></div>}
-            <div className="total"><span>Total</span><strong>{brl(order.totalCents)}</strong></div>
+            <div className="total"><span>{order.deliveryFeePending ? 'Total (sem a taxa)' : 'Total'}</span><strong>{brl(order.totalCents)}</strong></div>
           </div>
           <p><strong>Pagamento:</strong> {order.payment}{order.changeForCents ? ` · troco para ${brl(order.changeForCents)}` : ''}</p>
           <p><strong>Entrega:</strong> {order.address}</p>

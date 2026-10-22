@@ -28,3 +28,8 @@ export function formatBRL(cents: number) {
   const reais = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   return `${neg ? '-' : ''}R$ ${reais},${String(abs % 100).padStart(2, '0')}`;
 }
+
+// Compara nomes de bairro sem acento, caixa ou espaços repetidos ("Pq. Campo Bonito" ainda é diferente de "Parque").
+export function normalizeName(raw: string) {
+  return raw.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
