@@ -9,6 +9,7 @@ import { cleanText, normalizeCep, normalizeName, normalizePhone } from '../lib/t
 import { effectivePrice } from './pricing.js';
 import { getOpenState, getSettings } from './store.js';
 import { createPrintJob } from './print.js';
+import { distanceKm, geocodeAddress, type GeoAddress } from './geocode.js';
 
 export const ORDER_STATUSES = ['received', 'confirmed', 'preparing', 'out_for_delivery', 'completed', 'cancelled'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -41,6 +42,7 @@ export const createOrderSchema = z.object({
     neighborhoodId: z.string().uuid().optional(),
     neighborhoodName: z.string().trim().min(2).max(80).optional(),
     city: z.string().trim().max(80).optional().default(''),
+    state: z.string().trim().max(30).optional().default(''),
     complement: z.string().max(80).optional().default(''),
     reference: z.string().max(120).optional().default(''),
   }).refine((a) => a.neighborhoodId || a.neighborhoodName, { path: ['neighborhoodId'], message: 'Selecione o bairro.' }),
@@ -170,20 +172,59 @@ async function resolveHood(db: Db, storeId: string, settings: any, ref: HoodRef,
   return r.rows[0];
 }
 
+export const fmtKm = (km: number) => km.toFixed(1).replace('.', ',');
+
+export async function distanceTiers(db: Db, storeId: string) {
+  const r = await db.query('SELECT max_km, fee_cents FROM delivery_distance_tiers WHERE store_id = $1 ORDER BY max_km', [storeId]);
+  return r.rows.map((t) => ({ maxKm: Number(t.max_km), feeCents: t.fee_cents as number }));
+}
+
+// Taxa de entrega. No modo "por km" (loja localizada e com faixas cadastradas), acha o endereço do cliente e cobra a faixa
+// da distância em linha reta. Se o endereço não for encontrado, vale a regra do bairro (taxa do bairro ou "a combinar").
+async function resolveDelivery(db: Db, storeId: string, settings: any, ref: HoodRef, addr: GeoAddress | null, create: boolean) {
+  if (settings.delivery_fee_mode === 'distance' && settings.store_lat != null && settings.store_lng != null && addr) {
+    const tiers = await distanceTiers(db, storeId);
+    const point = tiers.length ? await geocodeAddress(db, addr) : null;
+    if (point) {
+      const km = Math.round(distanceKm({ lat: settings.store_lat, lng: settings.store_lng }, point) * 100) / 100;
+      const tier = tiers.find((t) => km <= t.maxKm);
+      if (!tier) {
+        throw badRequest('area_not_served', `Seu endereço fica a ${fmtKm(km)} km da loja. Entregamos até ${fmtKm(tiers[tiers.length - 1].maxKm)} km.`);
+      }
+      // O bairro aqui é só parte do endereço; bairro desativado pela loja continua fora da área.
+      let hood: any = null;
+      if (ref.id) hood = (await db.query('SELECT * FROM neighborhoods WHERE id = $1 AND store_id = $2', [ref.id, storeId])).rows[0] ?? null;
+      else if (ref.name) hood = (await db.query('SELECT * FROM neighborhoods WHERE store_id = $1', [storeId])).rows.find((n) => normalizeName(n.name) === normalizeName(ref.name!)) ?? null;
+      if (hood && !hood.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
+      const name = hood?.name ?? cleanText(ref.name ?? '', 80);
+      if (!name) throw badRequest('area_not_served', 'Selecione o bairro.', { field: 'address.neighborhoodId' });
+      return {
+        hood: hood ?? { id: null, name, city: cleanText(ref.city ?? '', 80), min_order_cents: null },
+        fee: tier.feeCents, feePending: false, distanceKm: km, source: 'distance' as const,
+      };
+    }
+  }
+  const n = await resolveHood(db, storeId, settings, ref, create);
+  if (!n || !n.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.', { field: 'address.neighborhoodId' });
+  const feePending = !!n.fee_pending;
+  return { hood: n, fee: feePending ? 0 : (n.fee_cents as number), feePending, distanceKm: null as number | null, source: 'neighborhood' as const };
+}
+
 // Prévia usada pelo carrinho (mesma regra do pedido, sem gravar nada).
-export async function quote(db: Db, storeId: string, items: CreateOrderInput['items'], hoodRef: HoodRef | null) {
+export async function quote(db: Db, storeId: string, items: CreateOrderInput['items'], hoodRef: HoodRef | null, addr: GeoAddress | null = null) {
   const priced = await priceItems(db, storeId, items);
   const settings = await getSettings(db, storeId);
   const subtotal = priced.reduce((s, i) => s + i.lineTotalCents, 0);
   let fee: number | null = null;
   let feePending = false;
+  let km: number | null = null;
   let minOrder = settings.min_order_cents as number;
   if (hoodRef && (hoodRef.id || hoodRef.name)) {
-    const n = await resolveHood(db, storeId, settings, hoodRef, false);
-    if (!n || !n.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
-    feePending = !!n.fee_pending;
-    fee = feePending ? 0 : n.fee_cents;
-    if (n.min_order_cents != null) minOrder = Math.max(minOrder, n.min_order_cents);
+    const d = await resolveDelivery(db, storeId, settings, hoodRef, addr, false);
+    feePending = d.feePending;
+    fee = d.fee;
+    km = d.distanceKm;
+    if (d.hood.min_order_cents != null) minOrder = Math.max(minOrder, d.hood.min_order_cents);
   }
   const savings = priced.reduce((s, i) => s + (i.regularPriceCents - i.unitPriceCents) * i.quantity, 0);
   return {
@@ -191,6 +232,7 @@ export async function quote(db: Db, storeId: string, items: CreateOrderInput['it
     subtotalCents: subtotal,
     deliveryFeeCents: fee,
     deliveryFeePending: feePending,
+    deliveryDistanceKm: km,
     discountCents: 0,
     totalCents: fee == null ? null : subtotal + fee,
     promoSavingsCents: savings,
@@ -227,16 +269,19 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
       const methodEnabled = { cash: settings.accepts_cash, pix: settings.accepts_pix, card: settings.accepts_card }[input.payment.method];
       if (!methodEnabled) throw badRequest('payment_not_accepted', 'Forma de pagamento não aceita no momento.', { field: 'payment.method' });
 
-      const hood = await resolveHood(db, storeId, settings, { id: input.address.neighborhoodId, name: input.address.neighborhoodName, city: input.address.city }, true);
-      if (!hood || !hood.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.', { field: 'address.neighborhoodId' });
+      const a = input.address;
+      const delivery = await resolveDelivery(
+        db, storeId, settings, { id: a.neighborhoodId, name: a.neighborhoodName, city: a.city },
+        { street: a.street, number: a.number, city: a.city, state: a.state, cep }, true,
+      );
+      const hood = delivery.hood;
 
       const priced = await priceItems(db, storeId, input.items);
       const subtotal = priced.reduce((s, i) => s + i.lineTotalCents, 0);
       const minOrder = Math.max(settings.min_order_cents, hood.min_order_cents ?? 0);
       if (subtotal < minOrder) throw badRequest('below_minimum', `O pedido mínimo é de R$ ${(minOrder / 100).toFixed(2).replace('.', ',')}.`);
       // Bairro novo (criado pelo CEP) sem taxa definida: o pedido entra com a taxa "a combinar".
-      const feePending = !!hood.fee_pending;
-      const fee = feePending ? 0 : (hood.fee_cents as number);
+      const { feePending, fee } = delivery;
       const discount = 0;
       const total = subtotal + fee - discount;
 
@@ -265,14 +310,16 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
       const o = await db.query(
         `INSERT INTO orders (store_id, number, public_token, idempotency_key, request_hash, customer_name, customer_phone, cep, street,
             street_number, complement, reference, neighborhood_id, neighborhood_name, city, notes, payment_method, change_for_cents,
-            subtotal_cents, delivery_fee_cents, discount_cents, total_cents, customer_ip_hash, delivery_fee_pending)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+            subtotal_cents, delivery_fee_cents, discount_cents, total_cents, customer_ip_hash, delivery_fee_pending,
+            delivery_distance_km, delivery_fee_source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
          RETURNING *`,
         [
           storeId, number, newToken(24), input.idempotencyKey, hash, cleanText(input.customer.name, 80), phone, cep,
           cleanText(input.address.street, 120), cleanText(input.address.number, 15), cleanText(input.address.complement, 80),
           cleanText(input.address.reference, 120), hood.id, hood.name, hood.city, cleanText(input.notes, 300),
           input.payment.method, changeFor, subtotal, fee, discount, total, ipHash, feePending,
+          delivery.distanceKm, delivery.source,
         ],
       );
       const order = o.rows[0];

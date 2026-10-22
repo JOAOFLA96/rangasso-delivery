@@ -44,6 +44,7 @@ export async function publicRoutes(app: FastifyInstance) {
       hours: hours.rows.map((h) => ({ weekday: h.weekday, day: WEEKDAY_NAMES_PT[h.weekday], opensAt: h.opens_at, closesAt: h.closes_at })),
       neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents, feePending: n.fee_pending })),
       acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods,
+      deliveryFeeMode: s.delivery_fee_mode === 'distance' && s.store_lat != null ? 'distance' : 'neighborhood',
     };
   });
 
@@ -60,10 +61,16 @@ export async function publicRoutes(app: FastifyInstance) {
         neighborhoodId: z.string().uuid().nullable().optional(),
         neighborhoodName: z.string().trim().max(80).nullable().optional(),
         city: z.string().trim().max(80).nullable().optional(),
+        // Endereço para a taxa por km (opcional; sem ele vale a taxa do bairro).
+        address: z.object({
+          street: z.string().trim().max(120), number: z.string().trim().max(15), city: z.string().trim().max(80),
+          state: z.string().trim().max(30).optional().default(''), cep: z.string().max(12).optional().default(''),
+        }).nullable().optional(),
       }),
       req.body,
     );
-    return quote(pool, await currentStoreId(), body.items, { id: body.neighborhoodId, name: body.neighborhoodName, city: body.city });
+    const addr = body.address && body.address.street.length >= 2 && body.address.city ? body.address : null;
+    return quote(pool, await currentStoreId(), body.items, { id: body.neighborhoodId, name: body.neighborhoodName, city: body.city }, addr);
   });
 
   app.post('/orders', { config: { rateLimit: { max: config.ORDER_RATE_LIMIT, timeWindow: '5 minutes' } } }, async (req, reply) => {
@@ -100,6 +107,7 @@ export async function publicRoutes(app: FastifyInstance) {
       subtotalCents: o.subtotal_cents,
       deliveryFeeCents: o.delivery_fee_cents,
       deliveryFeePending: o.delivery_fee_pending,
+      deliveryDistanceKm: o.delivery_distance_km == null ? null : Number(o.delivery_distance_km),
       discountCents: o.discount_cents,
       totalCents: o.total_cents,
       payment: PAYMENT_LABELS[o.payment_method],

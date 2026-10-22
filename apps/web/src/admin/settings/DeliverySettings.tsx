@@ -15,6 +15,7 @@ export function DeliverySettings() {
       <h2>Entrega e horários</h2>
       <OpenStatus data={data} />
       <DeliveryRules data={data} reload={reload} />
+      <DistanceFee data={data} reload={reload} />
       <Neighborhoods data={data} reload={reload} />
       <Hours data={data} reload={reload} />
       <Closures data={data} reload={reload} />
@@ -69,6 +70,118 @@ function DeliveryRules({ data, reload }: { data: SettingsData; reload: () => Pro
       </label>
       <Toggle checked={f.acceptUnlisted} disabled={disabled} onChange={(v) => setF({ ...f, acceptUnlisted: v })} label="Aceitar pedidos de bairros fora da lista (o CEP preenche o bairro e a taxa fica a combinar)" />
       {!disabled && <button className="btn btn-primary" onClick={save}>Salvar regras</button>}
+    </section>
+  );
+}
+
+const kmText = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+const parseNum = (v: string) => Number(v.trim().replace(',', '.'));
+
+function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promise<void> }) {
+  const { user } = useSession();
+  const toast = useToast();
+  const d = data.distance;
+  const manage = canManage(user);
+  const [mode, setMode] = useState(d.mode);
+  const [address, setAddress] = useState<string>(data.settings.address ?? '');
+  const [lat, setLat] = useState(d.storeLat == null ? '' : String(d.storeLat));
+  const [lng, setLng] = useState(d.storeLng == null ? '' : String(d.storeLng));
+  const [found, setFound] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [tiers, setTiers] = useState(d.tiers.length ? d.tiers.map((t) => ({ km: kmText(t.maxKm), fee: centsToInput(t.feeCents) })) : [{ km: '2', fee: '' }, { km: '4', fee: '' }, { km: '6', fee: '' }]);
+
+  async function locate() {
+    setLocating(true);
+    try {
+      const r = await api<{ lat: number; lng: number; precision: string; label: string }>('/api/admin/settings/locate-store', { body: { address } });
+      setLat(String(r.lat));
+      setLng(String(r.lng));
+      setFound(`${r.label}${r.precision === 'cep' ? ' (achado só pelo CEP: confira no mapa)' : ''}`);
+    } catch (e) {
+      toast(errorText(e), 'error');
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  async function save() {
+    const storeLat = lat.trim() ? parseNum(lat) : null;
+    const storeLng = lng.trim() ? parseNum(lng) : null;
+    if (Number.isNaN(storeLat) || Number.isNaN(storeLng)) return toast('Latitude/longitude inválida. Ex.: -23.0896', 'error');
+    const parsed = tiers.filter((t) => t.km.trim() || t.fee.trim()).map((t) => ({ maxKm: parseNum(t.km), feeCents: inputToCents(t.fee) }));
+    if (parsed.some((t) => !(t.maxKm > 0) || t.feeCents == null || Number.isNaN(t.feeCents))) return toast('Confira as faixas: km maior que zero e taxa no formato 7,50.', 'error');
+    try {
+      await api('/api/admin/settings/distance', { method: 'PUT', body: { mode, storeLat, storeLng, tiers: parsed } });
+      toast('Taxa por km salva');
+      reload();
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+  }
+
+  const sorted = tiers.map((t, i) => ({ ...t, i, n: parseNum(t.km) })).filter((t) => t.n > 0).sort((a, b) => a.n - b.n);
+  const hasPoint = lat.trim() && lng.trim();
+  return (
+    <section className="card">
+      <h3>Como cobrar a entrega</h3>
+      <div className="radio-list">
+        <label className={`radio-card ${mode === 'neighborhood' ? 'checked' : ''}`}>
+          <input type="radio" name="fee-mode" checked={mode === 'neighborhood'} disabled={!manage} onChange={() => setMode('neighborhood')} />
+          <span>Por bairro (taxa de cada bairro, abaixo)</span>
+        </label>
+        <label className={`radio-card ${mode === 'distance' ? 'checked' : ''}`}>
+          <input type="radio" name="fee-mode" checked={mode === 'distance'} disabled={!manage} onChange={() => setMode('distance')} />
+          <span>Por distância (km da loja até o cliente)</span>
+        </label>
+      </div>
+      {mode === 'distance' && (
+        <>
+          <p className="muted small">
+            O sistema acha o endereço do cliente no mapa (OpenStreetMap) e mede a distância em linha reta até a loja. Pelas ruas, o caminho
+            costuma ser 20% a 40% maior: leve isso em conta nas faixas. Se o endereço não for encontrado, vale a taxa do bairro.
+          </p>
+          <label className="field"><span>Endereço da loja</span>
+            <input value={address} maxLength={200} disabled={!manage} onChange={(e) => setAddress(e.target.value)} placeholder="Rua, número - bairro, cidade - UF, CEP" />
+          </label>
+          {manage && <button type="button" className="btn btn-secondary" onClick={locate} disabled={locating || address.trim().length < 5}>{locating ? 'Procurando…' : 'Localizar no mapa'}</button>}
+          {found && <p className="hint">Encontrado: {found}</p>}
+          <div className="grid-2">
+            <label className="field"><span>Latitude</span><input inputMode="decimal" value={lat} disabled={!manage} onChange={(e) => setLat(e.target.value)} placeholder="-23.0896" /></label>
+            <label className="field"><span>Longitude</span><input inputMode="decimal" value={lng} disabled={!manage} onChange={(e) => setLng(e.target.value)} placeholder="-47.2149" /></label>
+          </div>
+          {hasPoint && (
+            <p className="small">
+              <a href={`https://www.openstreetmap.org/?mlat=${parseNum(lat)}&mlon=${parseNum(lng)}#map=18/${parseNum(lat)}/${parseNum(lng)}`} target="_blank" rel="noreferrer">
+                Conferir o ponto no mapa ↗
+              </a>{' '}
+              <span className="muted">(se estiver errado, copie a latitude e longitude certas do Google Maps: clique com o botão direito no local)</span>
+            </p>
+          )}
+          <h4>Faixas de distância</h4>
+          <table className="a-table">
+            <thead><tr><th>Até (km)</th><th>Taxa (R$)</th><th /></tr></thead>
+            <tbody>
+              {tiers.map((t, i) => (
+                <tr key={i}>
+                  <td><input aria-label={`Faixa ${i + 1} até km`} inputMode="decimal" value={t.km} disabled={!manage} onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? { ...x, km: e.target.value } : x)))} /></td>
+                  <td><input aria-label={`Faixa ${i + 1} taxa`} inputMode="decimal" value={t.fee} disabled={!manage} placeholder="0,00" onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? { ...x, fee: e.target.value } : x)))} /></td>
+                  <td>{manage && <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTiers(tiers.filter((_, j) => j !== i))}>Remover</button>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {manage && <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTiers([...tiers, { km: '', fee: '' }])}>+ Faixa</button>}
+          {sorted.length > 0 && (
+            <ul className="muted small">
+              {sorted.map((t, k) => (
+                <li key={t.i}>De {k === 0 ? '0' : kmText(sorted[k - 1].n)} até {kmText(t.n)} km: {t.fee.trim() ? `R$ ${t.fee}` : '—'}</li>
+              ))}
+              <li>Acima de {kmText(sorted[sorted.length - 1].n)} km: não entregamos</li>
+            </ul>
+          )}
+        </>
+      )}
+      {manage && <button className="btn btn-primary" onClick={save}>Salvar forma de cobrança</button>}
     </section>
   );
 }

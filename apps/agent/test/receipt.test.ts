@@ -76,6 +76,12 @@ describe('ESC/POS', () => {
     expect(txt).toContain('TOTAL + TAXA');
   });
 
+  it('taxa por km mostra a distância', () => {
+    const p = orderPayload();
+    p.order!.deliveryDistanceKm = 3.04;
+    expect(renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 })).toMatch(/Taxa \(3,0 km\)\s+R\$/);
+  });
+
   it('inicializa, seleciona PC860 e corta uma vez por via', () => {
     const buf = renderEscPos(orderPayload(), { kind: 'original', reprintNumber: 0, copies: 2 });
     expect([...buf.subarray(0, 5)]).toEqual([0x1b, 0x40, 0x1b, 0x74, 3]);

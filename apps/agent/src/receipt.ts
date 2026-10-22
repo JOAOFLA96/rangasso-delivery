@@ -19,6 +19,7 @@ export interface ReceiptPayload {
     subtotalCents: number;
     deliveryFeeCents: number;
     deliveryFeePending?: boolean; // bairro novo, taxa ainda não definida pela loja
+    deliveryDistanceKm?: number | null; // taxa por km: distância em linha reta da loja
     discountCents: number;
     totalCents: number;
     paymentMethod: 'cash' | 'pix' | 'card';
@@ -92,7 +93,8 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
   }
   L(rule(W));
   for (const l of leftRight('Subtotal', brl(o.subtotalCents), W)) L(l);
-  for (const l of leftRight('Taxa de entrega', o.deliveryFeePending ? 'A COMBINAR' : brl(o.deliveryFeeCents), W)) L(l, { bold: !!o.deliveryFeePending });
+  const feeLabel = o.deliveryDistanceKm != null ? `Taxa (${o.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : 'Taxa de entrega';
+  for (const l of leftRight(feeLabel, o.deliveryFeePending ? 'A COMBINAR' : brl(o.deliveryFeeCents), W)) L(l, { bold: !!o.deliveryFeePending });
   if (o.discountCents > 0) for (const l of leftRight('Desconto', `-${brl(o.discountCents)}`, W)) L(l);
   for (const l of leftRight(o.deliveryFeePending ? 'TOTAL + TAXA' : 'TOTAL', brl(o.totalCents), W)) L(l, { bold: true, big: 'tall' });
   L(rule(W));

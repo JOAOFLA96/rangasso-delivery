@@ -6,6 +6,7 @@ export interface SettingsData {
   openState: { open: boolean; reason: string; nextOpening: string | null };
   hours: { weekday: number; opensAt: string; closesAt: string }[];
   closures: { id: string; date: string; reason: string }[];
+  distance: { mode: 'neighborhood' | 'distance'; storeLat: number | null; storeLng: number | null; tiers: { maxKm: number; feeCents: number }[] };
   neighborhoods: { id: string; name: string; city: string; feeCents: number; minOrderCents: number | null; active: boolean; feePending?: boolean }[];
 }
 

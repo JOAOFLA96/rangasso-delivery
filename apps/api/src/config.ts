@@ -19,6 +19,8 @@ const schema = z.object({
   ORDER_RATE_LIMIT: z.coerce.number().int().positive().default(30),
   GLOBAL_RATE_LIMIT: z.coerce.number().int().positive().default(300),
   LOGIN_RATE_LIMIT: z.coerce.number().int().positive().default(10),
+  // Serviço de mapas para achar o endereço do cliente na taxa por km (padrão: Nominatim/OpenStreetMap, gratuito, 1 consulta/s).
+  GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
 });
 
 // Hospedagens que informam o endereço público sozinhas (Render, Railway): usa se PUBLIC_URL não foi definido.
