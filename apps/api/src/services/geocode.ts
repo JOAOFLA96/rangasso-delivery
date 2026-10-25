@@ -91,6 +91,24 @@ const live: GeocodeFn = ({ provider, ...q }) =>
   throttled(provider as Provider, () => (provider === 'photon' ? photon(q) : provider === 'cep' ? cepApi(q) : nominatim(q)));
 
 let geocodeFn: GeocodeFn = live;
+
+// Diagnóstico: consulta cada serviço de mapas agora (sem cache) com um endereço fixo de Indaiatuba e diz se respondeu.
+const PROBES: Record<Provider, Record<string, string>> = {
+  nominatim: { street: '681 Avenida Itororó', city: 'Indaiatuba', state: 'SP', country: 'Brasil' },
+  photon: { q: 'Avenida Itororó 681, Indaiatuba SP', city: 'Indaiatuba' },
+  cep: { cep: '13334050' },
+};
+export async function probeProviders() {
+  return Promise.all((Object.keys(PROBES) as Provider[]).map(async (provider) => {
+    const t = Date.now();
+    try {
+      const r = await live({ provider, ...PROBES[provider] });
+      return { provider, ok: true, found: !!r, ms: Date.now() - t };
+    } catch (e) {
+      return { provider, ok: false, found: false, ms: Date.now() - t, error: (e as Error).message };
+    }
+  }));
+}
 // Testes trocam o serviço de mapas por um falso.
 export function setGeocoder(fn: GeocodeFn | null) {
   geocodeFn = fn ?? live;

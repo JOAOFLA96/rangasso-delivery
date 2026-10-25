@@ -10,6 +10,7 @@ import { config, isProd } from './config.js';
 import { pool } from './db/pool.js';
 import { AppError } from './lib/errors.js';
 import { loadImage } from './lib/uploads.js';
+import { probeProviders } from './services/geocode.js';
 import { registerAdminGuard } from './auth.js';
 import { publicRoutes } from './routes/public.js';
 import { authRoutes } from './routes/auth.js';
@@ -68,6 +69,14 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');
     return { ok: true };
+  });
+
+  // Situação dos serviços de mapas da taxa por km (sem dados de clientes): só contagens das buscas das últimas 24 h.
+  app.get('/api/health/maps', { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } }, async () => {
+    const providers = await probeProviders();
+    const r = await pool.query(`SELECT count(*) FILTER (WHERE lat IS NOT NULL)::int AS found, count(*) FILTER (WHERE lat IS NULL)::int AS not_found
+                                  FROM geocode_cache WHERE created_at > now() - interval '24 hours'`);
+    return { providers, last24h: r.rows[0] };
   });
 
   await app.register(publicRoutes, { prefix: '/api/public' });
