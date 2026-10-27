@@ -55,9 +55,13 @@ export async function savePushSubscription(db: Db, storeId: string, orderId: str
 }
 
 // Qual aviso mandar numa mudança de status (null = nenhum).
-export function pushForStatus(number: number, from: string, to: string, token: string): PushMessage | null {
+export function pushForStatus(number: number, from: string, to: string, token: string, fulfillment = 'delivery'): PushMessage | null {
   const url = `/cardapio/pedido/${token}`;
   const tag = `pedido-${number}`;
+  if (fulfillment === 'pickup') {
+    if (to === 'out_for_delivery') return { title: `Pedido #${number} pronto para retirar 🛍️`, body: 'Pode vir buscar na loja!', url, tag };
+    if (to === 'completed') return { title: `Pedido #${number} retirado`, body: 'Bom apetite! Toque aqui para avaliar seu pedido ⭐', url, tag, final: true };
+  }
   if (to === 'out_for_delivery') return { title: `Pedido #${number} saiu para entrega 🛵`, body: 'Já está a caminho. Fique de olho no telefone!', url, tag };
   if (from === 'received' && (to === 'confirmed' || to === 'preparing')) return { title: `Pedido #${number} aceito ✅`, body: 'Recebemos e já estamos preparando seu pedido.', url, tag };
   if (to === 'completed') return { title: `Pedido #${number} entregue`, body: 'Bom apetite! Toque aqui para avaliar seu pedido ⭐', url, tag, final: true };

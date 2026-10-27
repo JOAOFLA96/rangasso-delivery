@@ -82,6 +82,18 @@ describe('ESC/POS', () => {
     expect(renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 })).toMatch(/Taxa \(3,0 km\)\s+R\$/);
   });
 
+  it('retirada na loja: sem endereço e sem taxa', () => {
+    const p = orderPayload();
+    p.order!.fulfillment = 'pickup';
+    p.order!.deliveryFeeCents = 0;
+    p.order!.paymentMethod = 'card';
+    const txt = renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 });
+    expect(txt).toContain('RETIRADA NA LOJA');
+    expect(txt).not.toContain('Rua São João');
+    expect(txt).not.toContain('Taxa de entrega');
+    expect(txt).toContain('Cartão na retirada');
+  });
+
   it('inicializa, seleciona PC860 e corta uma vez por via', () => {
     const buf = renderEscPos(orderPayload(), { kind: 'original', reprintNumber: 0, copies: 2 });
     expect([...buf.subarray(0, 5)]).toEqual([0x1b, 0x40, 0x1b, 0x74, 3]);

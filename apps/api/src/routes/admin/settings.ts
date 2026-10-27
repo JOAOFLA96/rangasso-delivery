@@ -38,6 +38,7 @@ const deliveryBody = z.object({
   etaMaxMinutes: z.number().int().min(0).max(600),
   openMode: z.enum(['auto', 'force_open', 'force_closed']),
   acceptUnlistedNeighborhoods: z.boolean().optional(),
+  acceptsPickup: z.boolean().optional(),
 }).refine((b) => b.etaMaxMinutes >= b.etaMinMinutes, { path: ['etaMaxMinutes'], message: 'O tempo máximo precisa ser maior ou igual ao mínimo.' });
 
 const distanceBody = z.object({
@@ -84,7 +85,7 @@ export function settingsDto(s: any) {
     pixKey: s.pix_key, pixInstructions: s.pix_instructions, openMode: s.open_mode, printerModel: s.printer_model,
     printerConnection: s.printer_connection, printerHost: s.printer_host, printerPort: s.printer_port,
     printerWindowsName: s.printer_windows_name, autoPrint: s.auto_print, printCopies: s.print_copies, paperColumns: s.paper_columns,
-    receiptFooter: s.receipt_footer, acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods, updatedAt: s.updated_at,
+    receiptFooter: s.receipt_footer, acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods, acceptsPickup: s.accepts_pickup, updatedAt: s.updated_at,
   };
 }
 
@@ -144,6 +145,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     await updateSettings(req, 'delivery', {
       min_order_cents: b.minOrderCents, eta_min_minutes: b.etaMinMinutes, eta_max_minutes: b.etaMaxMinutes, open_mode: b.openMode,
       ...(b.acceptUnlistedNeighborhoods === undefined ? {} : { accept_unlisted_neighborhoods: b.acceptUnlistedNeighborhoods }),
+      ...(b.acceptsPickup === undefined ? {} : { accepts_pickup: b.acceptsPickup }),
     });
     return { ok: true };
   });

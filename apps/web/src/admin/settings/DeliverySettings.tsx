@@ -40,12 +40,12 @@ function DeliveryRules({ data, reload }: { data: SettingsData; reload: () => Pro
   const { user } = useSession();
   const toast = useToast();
   const s = data.settings;
-  const [f, setF] = useState({ minOrder: centsToInput(s.minOrderCents), etaMin: String(s.etaMinMinutes), etaMax: String(s.etaMaxMinutes), openMode: s.openMode, acceptUnlisted: s.acceptUnlistedNeighborhoods !== false });
+  const [f, setF] = useState({ minOrder: centsToInput(s.minOrderCents), etaMin: String(s.etaMinMinutes), etaMax: String(s.etaMaxMinutes), openMode: s.openMode, acceptUnlisted: s.acceptUnlistedNeighborhoods !== false, acceptsPickup: s.acceptsPickup !== false });
   async function save() {
     const minOrderCents = inputToCents(f.minOrder) ?? 0;
     if (Number.isNaN(minOrderCents)) return toast('Pedido mínimo inválido.', 'error');
     try {
-      await api('/api/admin/settings/delivery', { method: 'PUT', body: { minOrderCents, etaMinMinutes: Number(f.etaMin), etaMaxMinutes: Number(f.etaMax), openMode: f.openMode, acceptUnlistedNeighborhoods: f.acceptUnlisted } });
+      await api('/api/admin/settings/delivery', { method: 'PUT', body: { minOrderCents, etaMinMinutes: Number(f.etaMin), etaMaxMinutes: Number(f.etaMax), openMode: f.openMode, acceptUnlistedNeighborhoods: f.acceptUnlisted, acceptsPickup: f.acceptsPickup } });
       toast('Regras de entrega salvas');
       reload();
     } catch (e) {
@@ -69,6 +69,7 @@ function DeliveryRules({ data, reload }: { data: SettingsData; reload: () => Pro
         </select>
       </label>
       <Toggle checked={f.acceptUnlisted} disabled={disabled} onChange={(v) => setF({ ...f, acceptUnlisted: v })} label="Aceitar pedidos de bairros fora da lista (o CEP preenche o bairro e a taxa fica a combinar)" />
+      <Toggle checked={f.acceptsPickup} disabled={disabled} onChange={(v) => setF({ ...f, acceptsPickup: v })} label="Cliente pode retirar na loja (sem taxa de entrega)" />
       {!disabled && <button className="btn btn-primary" onClick={save}>Salvar regras</button>}
     </section>
   );

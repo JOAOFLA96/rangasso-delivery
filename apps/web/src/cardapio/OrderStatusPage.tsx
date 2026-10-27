@@ -12,6 +12,7 @@ const STEPS = [
   ['out_for_delivery', 'Saiu para entrega'],
   ['completed', 'Entregue'],
 ] as const;
+const PICKUP_STEP_LABELS: Record<string, string> = { out_for_delivery: 'Pronto para retirar', completed: 'Retirado' };
 
 export function OrderStatusPage({ store }: { store: StoreInfo }) {
   const { token } = useParams();
@@ -48,6 +49,7 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
   }
 
   const idx = STEPS.findIndex(([s]) => s === order.status);
+  const pickup = order.fulfillment === 'pickup';
   const whatsapp = store.whatsapp.replace(/\D/g, '');
   return (
     <div className="c-shell">
@@ -65,12 +67,12 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
         ) : (
           <ol className="steps" aria-label="Andamento do pedido">
             {STEPS.map(([s, label], i) => (
-              <li key={s} className={i < idx ? 'done' : i === idx ? 'current' : ''} aria-current={i === idx ? 'step' : undefined}>{label}</li>
+              <li key={s} className={i < idx ? 'done' : i === idx ? 'current' : ''} aria-current={i === idx ? 'step' : undefined}>{(pickup && PICKUP_STEP_LABELS[s]) || label}</li>
             ))}
           </ol>
         )}
 
-        {isActive(order.status) && <PushCard token={token!} />}
+        {isActive(order.status) && <PushCard token={token!} pickup={pickup} />}
         {(order.canReview || order.review) && <ReviewCard token={token!} order={order} onDone={() => fetchOrder(token!).then(setOrder)} />}
 
         <section className="card">
@@ -89,12 +91,14 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
           </ul>
           <div className="totals">
             <div><span>Subtotal</span><span>{brl(order.subtotalCents)}</span></div>
-            <div><span>Taxa de entrega{order.deliveryDistanceKm != null ? ` (${order.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : ''}</span><span>{order.deliveryFeePending ? 'a combinar' : brl(order.deliveryFeeCents)}</span></div>
+            {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{order.deliveryDistanceKm != null ? ` (${order.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : ''}</span><span>{order.deliveryFeePending ? 'a combinar' : brl(order.deliveryFeeCents)}</span></div>}
             {order.discountCents > 0 && <div><span>Desconto</span><span>− {brl(order.discountCents)}</span></div>}
             <div className="total"><span>{order.deliveryFeePending ? 'Total (sem a taxa)' : 'Total'}</span><strong>{brl(order.totalCents)}</strong></div>
           </div>
           <p><strong>Pagamento:</strong> {order.payment}{order.changeForCents ? ` · troco para ${brl(order.changeForCents)}` : ''}</p>
-          <p><strong>Entrega:</strong> {order.address}</p>
+          {pickup
+            ? <p><strong>Retirada na loja:</strong> {store.address || store.name}</p>
+            : <p><strong>Entrega:</strong> {order.address}</p>}
         </section>
 
         {(whatsapp || store.phone) && (
@@ -112,7 +116,8 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
   );
 }
 
-function PushCard({ token }: { token: string }) {
+function PushCard({ token, pickup }: { token: string; pickup: boolean }) {
+  const when = pickup ? 'quando estiver pronto para retirar' : 'quando sair para entrega';
   const [on, setOn] = useState(() => pushEnabledFor(token));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -122,7 +127,7 @@ function PushCard({ token }: { token: string }) {
     window.addEventListener(PUSH_EVENT, check);
     return () => window.removeEventListener(PUSH_EVENT, check);
   }, [token]);
-  if (on) return <p className="alert alert-ok small" role="status">🔔 Avisos ativados: você recebe uma notificação quando o pedido for aceito e quando sair para entrega.</p>;
+  if (on) return <p className="alert alert-ok small" role="status">🔔 Avisos ativados: você recebe uma notificação quando o pedido for aceito e {when}.</p>;
   if (!pushSupported()) {
     return iosNeedsHomeScreen() ? (
       <p className="alert alert-info small">
@@ -145,7 +150,7 @@ function PushCard({ token }: { token: string }) {
   }
   return (
     <section className="card push-card">
-      <p><strong>Quer ser avisado no celular?</strong> Mandamos uma notificação quando o pedido for aceito e quando sair para entrega.</p>
+      <p><strong>Quer ser avisado no celular?</strong> Mandamos uma notificação quando o pedido for aceito e {when}.</p>
       <button type="button" className="btn btn-primary" onClick={activate} disabled={busy}>{busy ? 'Ativando…' : '🔔 Ativar avisos'}</button>
       {err && <p className="field-error" role="alert">{err}</p>}
     </section>

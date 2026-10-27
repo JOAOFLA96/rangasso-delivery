@@ -12,6 +12,7 @@ export interface StoreInfo {
   payments: { cash: boolean; pix: boolean; card: boolean; pixInstructions: string }; open: boolean; closedMessage: string | null;
   nextOpening: string | null; hours: { weekday: number; day: string; opensAt: string; closesAt: string }[]; neighborhoods: Neighborhood[];
   acceptUnlistedNeighborhoods?: boolean;
+  acceptsPickup?: boolean;
   deliveryFeeMode?: 'neighborhood' | 'distance';
 }
 export interface CartLine {

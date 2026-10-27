@@ -13,6 +13,7 @@ export interface ReceiptPayload {
     createdAt: string;
     customerName: string;
     customerPhone: string;
+    fulfillment?: 'delivery' | 'pickup';
     address: { street: string; number: string; complement: string; reference: string; neighborhood: string; city: string; cep: string };
     notes: string;
     items: { quantity: number; name: string; unitPriceCents: number; lineTotalCents: number; notes: string; addons: { group: string; name: string; priceCents: number }[] }[];
@@ -78,12 +79,16 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
   L(rule(W));
   for (const l of wrap(`CLIENTE: ${o.customerName}`, W)) L(l, { bold: true });
   L(`TEL: ${o.customerPhone}`);
-  L('ENTREGA:', { bold: true });
-  const a = o.address;
-  for (const l of wrap(`${a.street}, ${a.number}${a.complement ? ` - ${a.complement}` : ''}`, W)) L(l, { bold: true });
-  for (const l of wrap(`Bairro: ${a.neighborhood}${a.city ? ` - ${a.city}` : ''}`, W)) L(l, { bold: true });
-  if (a.cep) L(`CEP: ${a.cep.slice(0, 5)}-${a.cep.slice(5)}`);
-  if (a.reference) for (const l of wrap(`Ref.: ${a.reference}`, W)) L(l);
+  if (o.fulfillment === 'pickup') {
+    L(' RETIRADA NA LOJA ', { align: 'center', bold: true, big: 'wide', invert: true });
+  } else {
+    L('ENTREGA:', { bold: true });
+    const a = o.address;
+    for (const l of wrap(`${a.street}, ${a.number}${a.complement ? ` - ${a.complement}` : ''}`, W)) L(l, { bold: true });
+    for (const l of wrap(`Bairro: ${a.neighborhood}${a.city ? ` - ${a.city}` : ''}`, W)) L(l, { bold: true });
+    if (a.cep) L(`CEP: ${a.cep.slice(0, 5)}-${a.cep.slice(5)}`);
+    if (a.reference) for (const l of wrap(`Ref.: ${a.reference}`, W)) L(l);
+  }
   L(rule(W, '='));
 
   for (const i of o.items) {
@@ -93,12 +98,13 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
   }
   L(rule(W));
   for (const l of leftRight('Subtotal', brl(o.subtotalCents), W)) L(l);
+  const pickup = o.fulfillment === 'pickup';
   const feeLabel = o.deliveryDistanceKm != null ? `Taxa (${o.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : 'Taxa de entrega';
-  for (const l of leftRight(feeLabel, o.deliveryFeePending ? 'A COMBINAR' : brl(o.deliveryFeeCents), W)) L(l, { bold: !!o.deliveryFeePending });
+  if (!pickup) for (const l of leftRight(feeLabel, o.deliveryFeePending ? 'A COMBINAR' : brl(o.deliveryFeeCents), W)) L(l, { bold: !!o.deliveryFeePending });
   if (o.discountCents > 0) for (const l of leftRight('Desconto', `-${brl(o.discountCents)}`, W)) L(l);
   for (const l of leftRight(o.deliveryFeePending ? 'TOTAL + TAXA' : 'TOTAL', brl(o.totalCents), W)) L(l, { bold: true, big: 'tall' });
   L(rule(W));
-  L(`PAGAMENTO: ${PAY[o.paymentMethod] ?? o.paymentMethod}`, { bold: true });
+  L(`PAGAMENTO: ${pickup && o.paymentMethod === 'card' ? 'Cartão na retirada' : PAY[o.paymentMethod] ?? o.paymentMethod}`, { bold: true });
   if (o.paymentMethod === 'cash') {
     if (o.changeForCents) {
       L(`Troco para ${brl(o.changeForCents)}`);

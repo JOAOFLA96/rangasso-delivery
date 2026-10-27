@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, brl, formatDateTime, formatTime } from '../lib/api';
 import { beep, enableSound, useLiveEvents } from './live';
-import { STATUS, PRINT, PAYMENT, fmtPhone, type Status, type PrintStatus } from './labels';
+import { STATUS, PRINT, PAYMENT, fmtPhone, statusLabel, type Status, type PrintStatus } from './labels';
 import { OrderDetail } from './OrderDetail';
 import { useToast } from './ui';
 
 export interface OrderRow {
   id: string; number: number; status: Status; print_status: PrintStatus; customer_name: string; customer_phone: string;
-  neighborhood_name: string; street: string; street_number: string; complement: string; payment_method: keyof typeof PAYMENT;
+  neighborhood_name: string; fulfillment?: 'delivery' | 'pickup'; street: string; street_number: string; complement: string; payment_method: keyof typeof PAYMENT;
   change_for_cents: number | null; total_cents: number; created_at: string; item_count: number; notes: string;
 }
 
@@ -144,12 +144,12 @@ export function OrdersTab() {
                   <button className={`a-order-card ${selected === o.id ? 'sel' : ''} ${newIds.has(o.id) ? 'is-new' : ''}`} onClick={() => open(o.id)}>
                     <div className="oc-top">
                       <strong className="oc-num">#{o.number}</strong>
-                      <span className={`pill ${STATUS[o.status].cls}`}>{STATUS[o.status].label}</span>
+                      <span className={`pill ${STATUS[o.status].cls}`}>{statusLabel(o.status, o.fulfillment)}</span>
                       <span className="oc-time">{view === 'active' ? formatTime(o.created_at) : formatDateTime(o.created_at)}</span>
                     </div>
                     <div className="oc-mid">
                       <span className="oc-name">{o.customer_name}</span>
-                      <span className="muted">{o.neighborhood_name}</span>
+                      {o.fulfillment === 'pickup' ? <span className="pill pill-sm pill-pickup">🛍️ Retirada</span> : <span className="muted">{o.neighborhood_name}</span>}
                     </div>
                     <div className="oc-bottom">
                       <span>{o.item_count} {o.item_count === 1 ? 'item' : 'itens'} · <strong>{brl(o.total_cents)}</strong> · {PAYMENT[o.payment_method]}</span>
