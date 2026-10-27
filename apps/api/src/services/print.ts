@@ -39,7 +39,11 @@ export async function buildReceiptPayload(db: Db, storeId: string, orderId: stri
       status: o.status,
       customerName: o.customer_name,
       customerPhone: formatPhone(o.customer_phone),
-      address: {
+      fulfillment: o.fulfillment,
+      // Agentes antigos não conhecem a retirada: a linha da rua avisa na comanda.
+      address: o.fulfillment === 'pickup' ? {
+        street: '*** RETIRADA NA LOJA ***', number: '', complement: '', reference: '', neighborhood: '-', city: '', cep: '',
+      } : {
         street: o.street, number: o.street_number, complement: o.complement, reference: o.reference,
         neighborhood: o.neighborhood_name, city: o.city, cep: o.cep,
       },

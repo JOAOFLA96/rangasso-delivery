@@ -171,3 +171,4 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
 
 .address-test { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .address-test-result { margin-top: 12px; }
+.pill-pickup { background: #fff1db; color: #8a4b00; }

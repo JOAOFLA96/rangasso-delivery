@@ -8,6 +8,17 @@ export const STATUS = {
 } as const;
 export type Status = keyof typeof STATUS;
 
+// Pedido para retirar: a etapa "saiu para entrega" vira "pronto para retirar".
+export const statusLabel = (status: Status, fulfillment?: string) =>
+  fulfillment === 'pickup' && status === 'out_for_delivery' ? 'Pronto para retirar' : fulfillment === 'pickup' && status === 'completed' ? 'Retirado' : STATUS[status].label;
+
+export function nextAction(status: Status, fulfillment?: string) {
+  const n = NEXT_ACTION[status];
+  if (n && fulfillment === 'pickup' && n.to === 'out_for_delivery') return { ...n, label: 'Pronto para retirar' };
+  if (n && fulfillment === 'pickup' && n.to === 'completed') return { ...n, label: 'Cliente retirou' };
+  return n;
+}
+
 export const NEXT_ACTION: Partial<Record<Status, { to: Status; label: string }>> = {
   received: { to: 'confirmed', label: 'Confirmar pedido' },
   confirmed: { to: 'preparing', label: 'Iniciar preparo' },

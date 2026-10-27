@@ -160,6 +160,28 @@ test('CEP preenche rua e bairro; bairro fora da lista sai com taxa a combinar', 
   expect(hood).toEqual({ fee_pending: true, fee_cents: 0 });
 });
 
+test('cliente escolhe retirar na loja: sem endereço e sem taxa', async ({ page }) => {
+  await page.goto('/cardapio');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole('button', { name: /Batata frita/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /Adicionar/ }).click();
+  await page.getByRole('button', { name: /Ver carrinho/ }).click();
+  await page.getByRole('button', { name: 'Finalizar pedido' }).click();
+  await page.getByLabel('Nome').fill('Cliente Retira');
+  await page.getByLabel('Telefone (WhatsApp)').pressSequentially('11977776666');
+  await page.getByText('Retirar na loja').click();
+  await expect(page.locator('#f-street')).toHaveCount(0);
+  await expect(page.locator('.totals')).toContainText('sem taxa');
+  await page.getByText('Pix').click();
+  await page.getByText(/Concordo com o uso/).click();
+  await page.getByRole('button', { name: /Enviar pedido/ }).click();
+  await expect(page).toHaveURL(/\/cardapio\/pedido\//);
+  await expect(page.getByText('Retirada na loja:')).toBeVisible();
+  const o = (await db.query(`SELECT fulfillment, delivery_fee_cents FROM orders WHERE customer_name = 'Cliente Retira' ORDER BY created_at DESC LIMIT 1`)).rows[0];
+  expect(o).toEqual({ fulfillment: 'pickup', delivery_fee_cents: 0 });
+});
+
 test('taxa por km: calcula pela distância do endereço até a loja', async ({ page }) => {
   await page.route('https://viacep.com.br/**', (r) =>
     r.fulfill({ json: { cep: '01310-100', logradouro: 'Avenida do CEP', bairro: 'Jardim do CEP', localidade: 'São Paulo', uf: 'SP' } }));

@@ -21,6 +21,10 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
   completed: 'Concluído',
   cancelled: 'Cancelado',
 };
+// Na retirada, o pedido pronto fica no balcão: mesma etapa de "saiu para entrega", com outro nome.
+export const PICKUP_STATUS_LABELS: Partial<Record<OrderStatus, string>> = { out_for_delivery: 'Pronto para retirar', completed: 'Retirado' };
+export const statusLabel = (status: string, fulfillment: string) =>
+  (fulfillment === 'pickup' ? PICKUP_STATUS_LABELS[status as OrderStatus] : undefined) ?? STATUS_LABELS[status as OrderStatus];
 export const PAYMENT_LABELS: Record<string, string> = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega' };
 
 // Fluxo só anda para frente (pode pular etapas). Cancelamento só a partir de estados não finais.
@@ -34,6 +38,8 @@ export function canTransition(from: OrderStatus, to: OrderStatus) {
 export const createOrderSchema = z.object({
   idempotencyKey: z.string().min(16).max(80).regex(/^[A-Za-z0-9_-]+$/),
   customer: z.object({ name: z.string().min(2).max(80), phone: z.string().min(8).max(25) }),
+  // Entrega no endereço ou retirada na loja (sem endereço e sem taxa).
+  fulfillment: z.enum(['delivery', 'pickup']).optional().default('delivery'),
   address: z.object({
     cep: z.string().max(12).optional().default(''),
     street: z.string().min(2).max(120),
@@ -45,7 +51,7 @@ export const createOrderSchema = z.object({
     state: z.string().trim().max(30).optional().default(''),
     complement: z.string().max(80).optional().default(''),
     reference: z.string().max(120).optional().default(''),
-  }).refine((a) => a.neighborhoodId || a.neighborhoodName, { path: ['neighborhoodId'], message: 'Selecione o bairro.' }),
+  }).refine((a) => a.neighborhoodId || a.neighborhoodName, { path: ['neighborhoodId'], message: 'Selecione o bairro.' }).nullable().optional(),
   notes: z.string().max(300).optional().default(''),
   payment: z.object({
     method: z.enum(['cash', 'pix', 'card']),
@@ -63,7 +69,7 @@ export const createOrderSchema = z.object({
     .min(1)
     .max(50),
   acceptPrivacy: z.literal(true),
-});
+}).refine((o) => o.fulfillment === 'pickup' || o.address, { path: ['address', 'street'], message: 'Informe o endereço de entrega.' });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
 function requestHash(input: CreateOrderInput) {
@@ -211,7 +217,13 @@ async function resolveDelivery(db: Db, storeId: string, settings: any, ref: Hood
 }
 
 // Prévia usada pelo carrinho (mesma regra do pedido, sem gravar nada).
-export async function quote(db: Db, storeId: string, items: CreateOrderInput['items'], hoodRef: HoodRef | null, addr: GeoAddress | null = null) {
+// Retirada na loja: sem bairro, sem taxa.
+const PICKUP_DELIVERY = {
+  hood: { id: null, name: '', city: '', min_order_cents: null as number | null },
+  fee: 0, feePending: false, distanceKm: null as number | null, source: 'pickup' as const,
+};
+
+export async function quote(db: Db, storeId: string, items: CreateOrderInput['items'], hoodRef: HoodRef | null, addr: GeoAddress | null = null, pickup = false) {
   const priced = await priceItems(db, storeId, items);
   const settings = await getSettings(db, storeId);
   const subtotal = priced.reduce((s, i) => s + i.lineTotalCents, 0);
@@ -219,7 +231,10 @@ export async function quote(db: Db, storeId: string, items: CreateOrderInput['it
   let feePending = false;
   let km: number | null = null;
   let minOrder = settings.min_order_cents as number;
-  if (hoodRef && (hoodRef.id || hoodRef.name)) {
+  if (pickup) {
+    if (!settings.accepts_pickup) throw badRequest('pickup_not_accepted', 'A retirada na loja não está disponível no momento.', { field: 'fulfillment' });
+    fee = 0;
+  } else if (hoodRef && (hoodRef.id || hoodRef.name)) {
     const d = await resolveDelivery(db, storeId, settings, hoodRef, addr, false);
     feePending = d.feePending;
     fee = d.fee;
@@ -253,9 +268,11 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
 
   const phone = normalizePhone(input.customer.phone);
   if (!phone) throw badRequest('invalid_phone', 'Telefone inválido. Informe DDD + número.', { field: 'customer.phone' });
+  const pickup = input.fulfillment === 'pickup';
+  const addr = pickup ? null : input.address!;
   let cep = '';
-  if (input.address.cep) {
-    const c = normalizeCep(input.address.cep);
+  if (addr?.cep) {
+    const c = normalizeCep(addr.cep);
     if (!c) throw badRequest('invalid_cep', 'CEP inválido.', { field: 'address.cep' });
     cep = c;
   }
@@ -269,11 +286,13 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
       const methodEnabled = { cash: settings.accepts_cash, pix: settings.accepts_pix, card: settings.accepts_card }[input.payment.method];
       if (!methodEnabled) throw badRequest('payment_not_accepted', 'Forma de pagamento não aceita no momento.', { field: 'payment.method' });
 
-      const a = input.address;
-      const delivery = await resolveDelivery(
-        db, storeId, settings, { id: a.neighborhoodId, name: a.neighborhoodName, city: a.city },
-        { street: a.street, number: a.number, city: a.city, state: a.state, cep }, true,
-      );
+      if (pickup && !settings.accepts_pickup) throw badRequest('pickup_not_accepted', 'A retirada na loja não está disponível no momento.', { field: 'fulfillment' });
+      const delivery = addr
+        ? await resolveDelivery(
+          db, storeId, settings, { id: addr.neighborhoodId, name: addr.neighborhoodName, city: addr.city },
+          { street: addr.street, number: addr.number, city: addr.city, state: addr.state, cep }, true,
+        )
+        : PICKUP_DELIVERY;
       const hood = delivery.hood;
 
       const priced = await priceItems(db, storeId, input.items);
@@ -311,15 +330,15 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
         `INSERT INTO orders (store_id, number, public_token, idempotency_key, request_hash, customer_name, customer_phone, cep, street,
             street_number, complement, reference, neighborhood_id, neighborhood_name, city, notes, payment_method, change_for_cents,
             subtotal_cents, delivery_fee_cents, discount_cents, total_cents, customer_ip_hash, delivery_fee_pending,
-            delivery_distance_km, delivery_fee_source)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+            delivery_distance_km, delivery_fee_source, fulfillment)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
          RETURNING *`,
         [
           storeId, number, newToken(24), input.idempotencyKey, hash, cleanText(input.customer.name, 80), phone, cep,
-          cleanText(input.address.street, 120), cleanText(input.address.number, 15), cleanText(input.address.complement, 80),
-          cleanText(input.address.reference, 120), hood.id, hood.name, hood.city, cleanText(input.notes, 300),
+          cleanText(addr?.street ?? '', 120), cleanText(addr?.number ?? '', 15), cleanText(addr?.complement ?? '', 80),
+          cleanText(addr?.reference ?? '', 120), hood.id, hood.name, hood.city, cleanText(input.notes, 300),
           input.payment.method, changeFor, subtotal, fee, discount, total, ipHash, feePending,
-          delivery.distanceKm, delivery.source,
+          delivery.distanceKm, delivery.source, input.fulfillment,
         ],
       );
       const order = o.rows[0];

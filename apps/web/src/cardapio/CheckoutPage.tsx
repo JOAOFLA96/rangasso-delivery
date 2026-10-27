@@ -8,7 +8,7 @@ import { StoreHeader } from './Header';
 import { enablePush, pushSupported, rememberOrder } from './orderStore';
 
 interface Quote { subtotalCents: number; deliveryFeeCents: number | null; deliveryFeePending?: boolean; deliveryDistanceKm?: number | null; discountCents: number; totalCents: number | null; promoSavingsCents: number; minOrderCents: number; belowMinimum: boolean }
-interface SavedCustomer { name: string; phone: string; cep: string; street: string; number: string; neighborhoodId: string; neighborhoodName?: string; city?: string; state?: string; complement: string; reference: string }
+interface SavedCustomer { fulfillment?: 'delivery' | 'pickup'; name: string; phone: string; cep: string; street: string; number: string; neighborhoodId: string; neighborhoodName?: string; city?: string; state?: string; complement: string; reference: string }
 
 const SAVED_KEY = 'rangasso.customer.v1';
 // Valor do select para um bairro fora da lista (vem do CEP ou digitado); a taxa fica a combinar.
@@ -29,6 +29,9 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     complement: saved?.complement ?? '', reference: saved?.reference ?? '', notes: '',
     payment: '' as '' | 'cash' | 'pix' | 'card', needChange: false, changeFor: '', privacy: false, remember: true,
   });
+  // Entrega no endereço ou retirada na loja (sem endereço e sem taxa).
+  const [mode, setMode] = useState<'delivery' | 'pickup'>(store.acceptsPickup && saved?.fulfillment === 'pickup' ? 'pickup' : 'delivery');
+  const pickup = mode === 'pickup';
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [quote, setQuote] = useState<Quote | null>(null);
   const canPush = useMemo(() => pushSupported() && Notification.permission !== 'denied', []);
@@ -51,7 +54,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   const newHoodName = isNewHood ? form.neighborhoodName.trim() : '';
   // Taxa por km: o servidor localiza o endereço; espera o cliente parar de digitar antes de recalcular.
   const byDistance = store.deliveryFeeMode === 'distance';
-  const addrKey = byDistance ? JSON.stringify({ street: form.street.trim(), number: form.number.trim(), city: form.city.trim(), state: form.state, cep: form.cep }) : '';
+  const addrKey = byDistance && !pickup ? JSON.stringify({ street: form.street.trim(), number: form.number.trim(), city: form.city.trim(), state: form.state, cep: form.cep }) : '';
   const [debouncedAddr, setDebouncedAddr] = useState(addrKey);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAddr(addrKey), 700);
@@ -65,7 +68,8 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       ? { neighborhoodId: null, neighborhoodName: newHoodName.length >= 2 ? newHoodName : null, city: form.city || null }
       : { neighborhoodId: form.neighborhoodId || null };
     const address = debouncedAddr ? JSON.parse(debouncedAddr) : null;
-    api<Quote>('/api/public/quote', { body: { items, ...hoodRef, address }, signal: ctrl.signal })
+    const body = pickup ? { items, fulfillment: 'pickup' } : { items, ...hoodRef, address };
+    api<Quote>('/api/public/quote', { body, signal: ctrl.signal })
       .then((q) => {
         setQuote(q);
         setQuoteError(null);
@@ -76,7 +80,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
         setQuoteError({ message: e.message, productId: e.details?.productId });
       });
     return () => ctrl.abort();
-  }, [items, form.neighborhoodId, isNewHood, newHoodName, form.city, debouncedAddr]);
+  }, [items, form.neighborhoodId, isNewHood, newHoodName, form.city, debouncedAddr, pickup]);
 
   // Busca de CEP no ViaCEP (serviço público): preenche rua e bairro. Bairro fora da lista entra com taxa a combinar
   // (se a loja aceitar); a loja define a taxa depois no painel.
@@ -126,18 +130,20 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   }
 
   const enabledPayments = (['cash', 'pix', 'card'] as const).filter((m) => store.payments[m]);
-  const labels = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega' };
+  const labels = { cash: 'Dinheiro', pix: 'Pix', card: pickup ? 'Cartão na retirada' : 'Cartão na entrega' };
 
   function validate() {
     const e: Record<string, string> = {};
     if (form.name.trim().length < 2) e.name = 'Informe seu nome.';
     const ph = digits(form.phone);
     if (!(ph.length === 10 || (ph.length === 11 && ph[2] === '9'))) e.phone = 'Telefone com DDD, ex.: (11) 98765-4321.';
-    if (form.cep && digits(form.cep).length !== 8) e.cep = 'CEP com 8 dígitos.';
-    if (form.street.trim().length < 2) e.street = 'Informe a rua.';
-    if (!form.number.trim()) e.number = 'Informe o número (ou "s/n").';
-    if (!form.neighborhoodId) e.neighborhoodId = 'Selecione o bairro.';
-    else if (isNewHood && newHoodName.length < 2) e.neighborhoodName = 'Digite o nome do bairro.';
+    if (!pickup) {
+      if (form.cep && digits(form.cep).length !== 8) e.cep = 'CEP com 8 dígitos.';
+      if (form.street.trim().length < 2) e.street = 'Informe a rua.';
+      if (!form.number.trim()) e.number = 'Informe o número (ou "s/n").';
+      if (!form.neighborhoodId) e.neighborhoodId = 'Selecione o bairro.';
+      else if (isNewHood && newHoodName.length < 2) e.neighborhoodName = 'Digite o nome do bairro.';
+    }
     if (!form.payment) e.payment = 'Escolha a forma de pagamento.';
     if (form.payment === 'cash' && form.needChange) {
       const c = moneyToCents(form.changeFor);
@@ -163,7 +169,8 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     }
     const payload = {
       customer: { name: form.name.trim(), phone: form.phone },
-      address: { cep: form.cep, street: form.street.trim(), number: form.number.trim(), ...(isNewHood ? { neighborhoodName: newHoodName } : { neighborhoodId: form.neighborhoodId }), city: form.city.trim(), state: form.state, complement: form.complement.trim(), reference: form.reference.trim() },
+      fulfillment: mode,
+      address: pickup ? null : { cep: form.cep, street: form.street.trim(), number: form.number.trim(), ...(isNewHood ? { neighborhoodName: newHoodName } : { neighborhoodId: form.neighborhoodId }), city: form.city.trim(), state: form.state, complement: form.complement.trim(), reference: form.reference.trim() },
       notes: form.notes.trim(),
       payment: { method: form.payment, changeForCents: form.payment === 'cash' && form.needChange ? moneyToCents(form.changeFor) : null },
       items,
@@ -177,7 +184,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       const res = await api<{ number: number; token: string }>('/api/public/orders', { body: { idempotencyKey: key, ...payload } });
       attempt.current = null;
       if (form.remember) {
-        storage.set(SAVED_KEY, { name: form.name, phone: form.phone, cep: form.cep, street: form.street, number: form.number, neighborhoodId: isNewHood ? '' : form.neighborhoodId, neighborhoodName: isNewHood ? newHoodName : '', city: form.city, state: form.state, complement: form.complement, reference: form.reference });
+        storage.set(SAVED_KEY, { fulfillment: mode, name: form.name, phone: form.phone, cep: form.cep, street: form.street, number: form.number, neighborhoodId: isNewHood ? '' : form.neighborhoodId, neighborhoodName: isNewHood ? newHoodName : '', city: form.city, state: form.state, complement: form.complement, reference: form.reference });
       } else {
         storage.set(SAVED_KEY, null);
       }
@@ -225,7 +232,29 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
             </label>
           </section>
 
-          <section className="card">
+          {store.acceptsPickup && (
+            <section className="card">
+              <h2>Como você quer receber?</h2>
+              <div className="radio-list" role="radiogroup" aria-label="Entrega ou retirada">
+                <label className={`radio-card ${!pickup ? 'checked' : ''}`}>
+                  <input type="radio" name="fulfillment" checked={!pickup} onChange={() => setMode('delivery')} />
+                  <span>🛵 Entrega no meu endereço</span>
+                </label>
+                <label className={`radio-card ${pickup ? 'checked' : ''}`}>
+                  <input type="radio" name="fulfillment" checked={pickup} onChange={() => setMode('pickup')} />
+                  <span>🛍️ Retirar na loja <em className="muted">(sem taxa de entrega)</em></span>
+                </label>
+              </div>
+              {pickup && (
+                <p className="alert alert-info pickup-info">
+                  <strong>Retirar em:</strong> {store.address || store.name}
+                  {store.eta.max > 0 && <><br />Fica pronto em cerca de {store.eta.min}–{store.eta.max} min. Avisamos quando estiver pronto.</>}
+                </p>
+              )}
+            </section>
+          )}
+
+          {!pickup && <section className="card">
             <h2>Entrega</h2>
             <label className="field">
               <span>CEP <em className="muted">(opcional)</em></span>
@@ -286,10 +315,10 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
               <input id="f-reference" value={form.reference} onChange={(e) => set('reference', e.target.value)} maxLength={120} />
             </label>
             {store.deliveryInstructions && <p className="hint">{store.deliveryInstructions}</p>}
-          </section>
+          </section>}
 
           <section className="card">
-            <h2>Pagamento <span className="muted small">(na entrega)</span></h2>
+            <h2>Pagamento <span className="muted small">({pickup ? 'na retirada' : 'na entrega'})</span></h2>
             <div className="radio-list" id="f-payment" tabIndex={-1}>
               {enabledPayments.map((m) => (
                 <label key={m} className={`radio-card ${form.payment === m ? 'checked' : ''}`}>
@@ -334,7 +363,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
             ) : (
               <div className="totals">
                 <div><span>Subtotal</span><span>{brl(quote?.subtotalCents)}</span></div>
-                <div><span>Taxa de entrega{quote?.deliveryDistanceKm != null ? ` (${quote.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : hoodLabel ? ` (${hoodLabel})` : ''}</span><span>{feePending ? 'a combinar' : quote?.deliveryFeeCents == null ? 'selecione o bairro' : brl(quote.deliveryFeeCents)}</span></div>
+                {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{quote?.deliveryDistanceKm != null ? ` (${quote.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : hoodLabel ? ` (${hoodLabel})` : ''}</span><span>{feePending ? 'a combinar' : quote?.deliveryFeeCents == null ? 'selecione o bairro' : brl(quote.deliveryFeeCents)}</span></div>}
                 {quote && quote.discountCents > 0 && <div><span>Desconto</span><span>− {brl(quote.discountCents)}</span></div>}
                 {quote && quote.promoSavingsCents > 0 && <div className="muted small"><span>Você economizou com promoções</span><span>{brl(quote.promoSavingsCents)}</span></div>}
                 <div className="total"><span>{feePending ? 'Total (sem a taxa)' : 'Total'}</span><strong>{quote?.totalCents == null ? '—' : brl(quote.totalCents)}</strong></div>

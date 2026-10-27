@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, brl, formatDateTime } from '../lib/api';
-import { NEXT_ACTION, PAYMENT, PRINT, PRINT_HELP, STATUS, fmtPhone, type Status, type PrintStatus } from './labels';
+import { PAYMENT, PRINT, PRINT_HELP, STATUS, fmtPhone, nextAction, statusLabel, type Status, type PrintStatus } from './labels';
 import { canManage, useSession } from './session';
 import { Confirm, errorText, useToast } from './ui';
 
@@ -34,7 +34,7 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
     setBusy(true);
     try {
       await api(`/api/admin/orders/${id}/status`, { body: { status, note } });
-      toast(`Pedido #${d!.order.number}: ${STATUS[status].label}`);
+      toast(`Pedido #${d!.order.number}: ${statusLabel(status, d!.order.fulfillment)}`);
       await reload();
     } catch (e) {
       toast(errorText(e), 'error');
@@ -66,7 +66,8 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
   if (!d) return <div className="a-detail"><p className="muted pad">Carregando…</p></div>;
 
   const o = d.order;
-  const next = NEXT_ACTION[o.status as Status];
+  const pickup = o.fulfillment === 'pickup';
+  const next = nextAction(o.status as Status, o.fulfillment);
   const final = o.status === 'completed' || o.status === 'cancelled';
   const address = `${o.street}, ${o.street_number}${o.complement ? ` - ${o.complement}` : ''} - ${o.neighborhood_name}${o.city ? `, ${o.city}` : ''}`;
   const changeBack = o.change_for_cents ? o.change_for_cents - o.total_cents : null;
@@ -80,7 +81,7 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
           <h2 className="a-detail-num">Pedido #{o.number}</h2>
           <p className="muted small">{formatDateTime(o.created_at)}</p>
         </div>
-        <span className={`pill ${STATUS[o.status as Status].cls}`}>{STATUS[o.status as Status].label}</span>
+        <span className={`pill ${STATUS[o.status as Status].cls}`}>{statusLabel(o.status as Status, o.fulfillment)}</span>
       </div>
 
       {!final && (
@@ -99,9 +100,11 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
           {' · '}
           <a href={`https://wa.me/55${o.customer_phone}`} target="_blank" rel="noreferrer">WhatsApp</a>
         </p>
-        <p>{address}{o.cep ? ` · CEP ${o.cep.slice(0, 5)}-${o.cep.slice(5)}` : ''}</p>
-        {o.reference && <p className="muted">Referência: {o.reference}</p>}
-        <p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`} target="_blank" rel="noreferrer">Abrir no mapa</a></p>
+        {pickup ? <p className="pill pill-pickup">🛍️ Cliente vai retirar na loja</p> : <>
+          <p>{address}{o.cep ? ` · CEP ${o.cep.slice(0, 5)}-${o.cep.slice(5)}` : ''}</p>
+          {o.reference && <p className="muted">Referência: {o.reference}</p>}
+          <p><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`} target="_blank" rel="noreferrer">Abrir no mapa</a></p>
+        </>}
       </section>
 
       <section className="a-block">
@@ -119,11 +122,11 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
         {o.notes && <div className="note">Observação do pedido: {o.notes}</div>}
         <div className="totals">
           <div><span>Subtotal</span><span>{brl(o.subtotal_cents)}</span></div>
-          <div><span>Taxa de entrega{o.delivery_distance_km != null ? ` (${Number(o.delivery_distance_km).toFixed(1).replace('.', ',')} km, linha reta)` : ''}</span><span>{o.delivery_fee_pending ? <strong>A COMBINAR (bairro sem taxa definida)</strong> : brl(o.delivery_fee_cents)}</span></div>
+          {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{o.delivery_distance_km != null ? ` (${Number(o.delivery_distance_km).toFixed(1).replace('.', ',')} km, linha reta)` : ''}</span><span>{o.delivery_fee_pending ? <strong>A COMBINAR (bairro sem taxa definida)</strong> : brl(o.delivery_fee_cents)}</span></div>}
           {o.discount_cents > 0 && <div><span>Desconto</span><span>− {brl(o.discount_cents)}</span></div>}
           <div className="total"><span>{o.delivery_fee_pending ? 'Total + taxa' : 'Total'}</span><strong>{brl(o.total_cents)}</strong></div>
         </div>
-        <p><strong>Pagamento:</strong> {PAYMENT[o.payment_method as keyof typeof PAYMENT]}
+        <p><strong>Pagamento:</strong> {pickup && o.payment_method === 'card' ? 'Cartão na retirada' : PAYMENT[o.payment_method as keyof typeof PAYMENT]}
           {o.change_for_cents ? ` · troco para ${brl(o.change_for_cents)} (levar ${brl(changeBack)})` : o.payment_method === 'cash' ? ' · sem troco' : ''}</p>
       </section>
 
@@ -168,7 +171,7 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
         <ol className="a-history">
           {d.history.map((h, i) => (
             <li key={i}>
-              <strong>{STATUS[h.to_status].label}</strong> · {formatDateTime(h.created_at)} · {h.user_name ?? 'Cliente (cardápio)'}
+              <strong>{statusLabel(h.to_status, o.fulfillment)}</strong> · {formatDateTime(h.created_at)} · {h.user_name ?? 'Cliente (cardápio)'}
               {h.note && <div className="muted small">{h.note}</div>}
             </li>
           ))}

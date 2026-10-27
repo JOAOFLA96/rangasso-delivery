@@ -15,7 +15,7 @@ export function forgetOrder(token: string) {
 }
 
 export interface PublicOrder {
-  number: number; status: string; statusLabel: string; createdAt: string; customerName: string; address: string;
+  number: number; status: string; statusLabel: string; createdAt: string; customerName: string; address: string | null; fulfillment?: 'delivery' | 'pickup';
   items: { quantity: number; name: string; lineTotalCents: number; notes: string; addons: string[] }[];
   subtotalCents: number; deliveryFeeCents: number; deliveryFeePending?: boolean; deliveryDistanceKm?: number | null; discountCents: number; totalCents: number; payment: string;
   changeForCents: number | null; cancelReason: string | null;

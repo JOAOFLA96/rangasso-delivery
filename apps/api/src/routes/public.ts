@@ -7,7 +7,7 @@ import { hashIp } from '../lib/security.js';
 import { parse } from '../lib/validate.js';
 import { notFound } from '../lib/errors.js';
 import { imageUrl, publicMenu } from '../services/menu.js';
-import { createOrder, createOrderSchema, getOrderDetail, quote, STATUS_LABELS, PAYMENT_LABELS } from '../services/orders.js';
+import { createOrder, createOrderSchema, getOrderDetail, quote, statusLabel, PAYMENT_LABELS } from '../services/orders.js';
 import { currentStoreId, getOpenState, getSettings } from '../services/store.js';
 import { WEEKDAY_NAMES_PT } from '../services/storeHours.js';
 import { savePushSubscription, vapidKeys } from '../services/push.js';
@@ -58,6 +58,7 @@ export async function publicRoutes(app: FastifyInstance) {
       hours: hours.rows.map((h) => ({ weekday: h.weekday, day: WEEKDAY_NAMES_PT[h.weekday], opensAt: h.opens_at, closesAt: h.closes_at })),
       neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents, feePending: n.fee_pending })),
       acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods,
+      acceptsPickup: s.accepts_pickup,
       deliveryFeeMode: s.delivery_fee_mode === 'distance' && s.store_lat != null ? 'distance' : 'neighborhood',
     };
   });
@@ -72,6 +73,7 @@ export async function publicRoutes(app: FastifyInstance) {
     const body = parse(
       z.object({
         items: createOrderSchema.shape.items,
+        fulfillment: z.enum(['delivery', 'pickup']).optional().default('delivery'),
         neighborhoodId: z.string().uuid().nullable().optional(),
         neighborhoodName: z.string().trim().max(80).nullable().optional(),
         city: z.string().trim().max(80).nullable().optional(),
@@ -84,7 +86,7 @@ export async function publicRoutes(app: FastifyInstance) {
       req.body,
     );
     const addr = body.address && body.address.street.length >= 2 && body.address.city ? body.address : null;
-    return quote(pool, await currentStoreId(), body.items, { id: body.neighborhoodId, name: body.neighborhoodName, city: body.city }, addr);
+    return quote(pool, await currentStoreId(), body.items, { id: body.neighborhoodId, name: body.neighborhoodName, city: body.city }, addr, body.fulfillment === 'pickup');
   });
 
   app.post('/orders', { config: { rateLimit: { max: config.ORDER_RATE_LIMIT, timeWindow: '5 minutes' } } }, async (req, reply) => {
@@ -108,10 +110,11 @@ export async function publicRoutes(app: FastifyInstance) {
     return {
       number: o.number,
       status: o.status,
-      statusLabel: STATUS_LABELS[o.status as keyof typeof STATUS_LABELS],
+      statusLabel: statusLabel(o.status, o.fulfillment),
+      fulfillment: o.fulfillment,
       createdAt: o.created_at,
       customerName: o.customer_name,
-      address: `${o.street}, ${o.street_number}${o.complement ? ` - ${o.complement}` : ''} - ${o.neighborhood_name}`,
+      address: o.fulfillment === 'pickup' ? null : `${o.street}, ${o.street_number}${o.complement ? ` - ${o.complement}` : ''} - ${o.neighborhood_name}`,
       items: o.items.map((i: any) => ({
         quantity: i.quantity, name: i.product_name, lineTotalCents: i.line_total_cents, notes: i.notes,
         addons: i.addons.map((a: any) => a.addon_name),

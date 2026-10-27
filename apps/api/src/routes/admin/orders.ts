@@ -52,7 +52,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     const rows = await pool.query(
       `SELECT o.id, o.number, o.status, o.print_status, o.customer_name, o.customer_phone, o.neighborhood_name, o.street, o.street_number,
               o.complement, o.payment_method, o.change_for_cents, o.subtotal_cents, o.delivery_fee_cents, o.delivery_fee_pending, o.discount_cents, o.total_cents,
-              o.created_at, o.updated_at, o.notes,
+              o.created_at, o.updated_at, o.notes, o.fulfillment,
               (SELECT coalesce(sum(quantity),0)::int FROM order_items WHERE order_id = o.id) AS item_count,
               count(*) OVER()::int AS total_count
          FROM orders o WHERE ${where.join(' AND ')}
@@ -94,8 +94,8 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     });
     emitStoreEvent(admin.storeId, { type: 'order.updated', orderId: id, number: r.number });
     // Aviso no celular do cliente (sem esperar: falha de envio não afeta o painel).
-    const token = (await pool.query('SELECT public_token FROM orders WHERE id = $1', [id])).rows[0]?.public_token;
-    const msg = token && pushForStatus(r.number, r.from, body.status, token);
+    const row = (await pool.query('SELECT public_token, fulfillment FROM orders WHERE id = $1', [id])).rows[0];
+    const msg = row && pushForStatus(r.number, r.from, body.status, row.public_token, row.fulfillment);
     if (msg) notifyOrder(id, msg).catch((e) => req.log.warn({ err: e }, 'falha ao enviar aviso push'));
     return { ok: true };
   });
