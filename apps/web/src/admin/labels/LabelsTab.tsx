@@ -448,17 +448,29 @@ function PrintAdjust({ printer }: { printer: Printer }) {
         <label className="field"><span>Margem interna (mm)</span><input type="number" step="0.5" min={0} max={5} value={p.marginMm} onChange={num('marginMm', 0, 5)} /></label>
         <label className="field"><span>Deslocar para a direita (mm, negativo = esquerda)</span><input type="number" step="0.5" min={-5} max={5} value={p.offsetXmm} onChange={num('offsetXmm', -5, 5)} /></label>
         <label className="field"><span>Deslocar para baixo (mm, negativo = cima)</span><input type="number" step="0.5" min={-5} max={5} value={p.offsetYmm} onChange={num('offsetYmm', -5, 5)} /></label>
+        <label className="field"><span>Correção do avanço por etiqueta (mm)</span><input type="number" step="0.1" min={-6} max={6} value={p.pitchAdjustMm} onChange={num('pitchAdjustMm', -6, 6)} /></label>
+        <div className="field"><span>Altura de cada página enviada</span><output className="lbl-computed">{(30 + (p.mode === 'continuous' ? p.gapMm : 0) + p.pitchAdjustMm).toFixed(1).replace('.', ',')} mm</output></div>
       </div>
+      <section className="card lbl-help">
+        <h3>A etiqueta vai descendo (ou subindo) a cada impressão?</h3>
+        <p className="small">Isso é o <strong>avanço</strong> errado: a impressora anda mais (ou menos) que o passo do rolo, que é 30 mm + {p.gapMm} mm = {30 + p.gapMm} mm. Imprima o teste com 5 etiquetas e veja quanto cada uma muda em relação à anterior:</p>
+        <ul className="small">
+          <li><strong>Desce uns {p.gapMm} mm por etiqueta:</strong> o espaço está sendo contado duas vezes. Use "Etiqueta destacável" aqui <em>e</em> no driver papel 50 x 30 com espaço {p.gapMm} mm, ou "Papel contínuo" aqui <em>e</em> no driver papel 50 x {30 + p.gapMm} sem espaço/sensor. Nunca os dois juntos.</li>
+          <li><strong>Sobe uns {p.gapMm} mm por etiqueta:</strong> ninguém está pulando o espaço. Ligue o sensor de espaço (gap/marca) no driver, ou mude aqui para "Papel contínuo".</li>
+          <li><strong>Desloca pouco (menos de 2 mm):</strong> ajuste a correção do avanço acima (desce = número negativo, sobe = positivo) e rode a calibração do sensor da impressora (no driver ou segurando o botão FEED ao ligar, conforme o modelo).</li>
+        </ul>
+      </section>
       <div className="a-row wrap">
         <button className="btn btn-primary" onClick={() => { savePrefs(p); toast('Ajustes salvos neste computador'); }}>Salvar ajustes</button>
-        <button className="btn btn-secondary" disabled={printer.busy} onClick={() => { savePrefs(p); printer.printCalibration(2); }}>Imprimir teste de alinhamento</button>
+        <button className="btn btn-secondary" disabled={printer.busy} onClick={() => { savePrefs(p); printer.printCalibration(5); }}>Imprimir teste (5 etiquetas)</button>
         <button className="btn btn-ghost" onClick={() => setP(DEFAULT_PREFS)}>Voltar ao padrão</button>
       </div>
       <section className="card lbl-help">
         <h3>Como deixar a impressão certa (Chrome ou Edge)</h3>
         <ol>
-          <li>Instale o driver da impressora de etiquetas no Windows e crie o papel <strong>50 x 30 mm</strong> (em alguns drivers: "Largura 50, Altura 30, Espaço 4").</li>
-          <li>Na janela de impressão, escolha a impressora de etiquetas, <strong>Margens: Nenhuma</strong>, <strong>Escala: Padrão (100%)</strong> e desmarque <strong>Cabeçalhos e rodapés</strong>. O navegador lembra essas opções.</li>
+          <li>Instale o driver da impressora de etiquetas no Windows. Em <strong>Preferências de impressão</strong> do driver, crie o papel <strong>50 x 30 mm</strong>, tipo de mídia <strong>"Etiqueta com espaço" (gap / labels with gaps)</strong>, espaço <strong>4 mm</strong>, e deixe esse papel como padrão.</li>
+          <li>Rode a <strong>calibração do sensor</strong> da impressora (opção "Calibrar" no driver ou utilitário do fabricante) com o rolo já colocado.</li>
+          <li>Na janela de impressão, escolha a impressora de etiquetas e, em Mais definições, <strong>Tamanho do papel: 50 x 30</strong>, <strong>Margens: Nenhuma</strong>, <strong>Escala: Padrão (100%)</strong> e desmarque <strong>Cabeçalhos e rodapés</strong>. O navegador lembra essas opções.</li>
           <li>Imprima o teste de alinhamento. Se a moldura sair cortada ou torta, ajuste os deslocamentos acima.</li>
           <li>Opcional: para imprimir sem a janela de confirmação, abra o painel por um atalho do Chrome com <code>--kiosk-printing</code> (usa a última impressora escolhida).</li>
         </ol>

@@ -96,3 +96,21 @@ test('etiquetas pela Epson do caixa: vai para a fila do agente, sem abrir a impr
   expect(job.payload.label.productName).toBe('Cebola caramelizada');
   expect(await page.evaluate(() => (window as any).__prints)).toBe(0);
 });
+
+test('teste de alinhamento: 5 etiquetas e correção do avanço muda a altura da página', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.print = () => {};
+    localStorage.setItem('rg_label_print_prefs', JSON.stringify({ mode: 'gap', gapMm: 4, marginMm: 1.5, offsetXmm: 0, offsetYmm: 0, pitchAdjustMm: -0.5 }));
+  });
+  await login(page);
+  await page.goto('/admin/etiquetas/ajustes');
+  await expect(page.getByText('29,5 mm')).toBeVisible();
+  await page.getByRole('button', { name: 'Imprimir teste (5 etiquetas)' }).click();
+  await expect(page.locator('#label-page-style')).toHaveCount(1);
+  await page.evaluate(() => document.body.classList.add('printing-labels'));
+  const text = (await page.pdf({ preferCSSPageSize: true, printBackground: true })).toString('latin1');
+  expect((text.match(/\/Type\s*\/Page[^s]/g) ?? []).length).toBe(5);
+  const box = text.match(/\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/);
+  // 29,5 mm = 83,6 pt.
+  expect(Math.round(Number(box![2]))).toBe(84);
+});
