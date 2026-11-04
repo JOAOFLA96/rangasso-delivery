@@ -28,3 +28,6 @@ services:
         sync: false
       - key: INITIAL_ADMIN_NAME
         value: João
+      # Chave grátis do OpenRouteService: taxa por km pela rota de carro (sem ela, linha reta).
+      - key: ORS_API_KEY
+        sync: false

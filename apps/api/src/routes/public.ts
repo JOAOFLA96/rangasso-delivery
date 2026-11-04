@@ -123,6 +123,7 @@ export async function publicRoutes(app: FastifyInstance) {
       deliveryFeeCents: o.delivery_fee_cents,
       deliveryFeePending: o.delivery_fee_pending,
       deliveryDistanceKm: o.delivery_distance_km == null ? null : Number(o.delivery_distance_km),
+      deliveryDistanceBy: o.delivery_distance_by ?? null,
       discountCents: o.discount_cents,
       totalCents: o.total_cents,
       payment: PAYMENT_LABELS[o.payment_method],

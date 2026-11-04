@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, seed, makeApp, orderBody, loginAs, pool, type Fixture } from './helpers.js';
 import { distanceKm, geocodeText, setGeocoder } from '../src/services/geocode.js';
+import { setRouter } from '../src/services/routing.js';
 
 let app: Awaited<ReturnType<typeof makeApp>>;
 let f: Fixture;
@@ -26,7 +27,10 @@ beforeEach(async () => {
   await pool.query(`UPDATE store_settings SET delivery_fee_mode = 'distance', store_lat = $1, store_lng = $2`, [STORE.lat, STORE.lng]);
   await pool.query(`INSERT INTO delivery_distance_tiers (store_id, max_km, fee_cents) VALUES ($1, 2, 500), ($1, 5, 800)`, [f.storeId]);
 });
-afterEach(() => setGeocoder(null));
+afterEach(() => {
+  setGeocoder(null);
+  setRouter(null);
+});
 afterAll(async () => {
   await app.close();
 });
@@ -144,11 +148,41 @@ describe('taxa por km', () => {
     expect(r.json()).toMatchObject({ deliveryFeeCents: 500, deliveryFeePending: false });
   });
 
+  it('pelas ruas: cobra pela rota de carro, guarda a rota e grava como foi medido', async () => {
+    let routes = 0;
+    setRouter(async () => { routes++; return 1600; }); // 1,6 km pelas ruas (linha reta ~1,0 km)
+    expect((await quote('Rua Perto')).json()).toMatchObject({ deliveryFeeCents: 500, deliveryDistanceKm: 1.6, deliveryDistanceBy: 'route' });
+    setRouter(async () => { routes++; return 4200; });
+    expect((await quote('Rua Perto')).json()).toMatchObject({ deliveryDistanceKm: 1.6 }); // rota guardada, não consulta de novo
+    expect(routes).toBe(1);
+    setRouter(async () => 2600); // 2,6 km: passa para a faixa de R$ 8
+    const res = await post(orderBody(f, { address: addr('Rua Media') }));
+    const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [res.json().token])).rows[0];
+    expect(o).toMatchObject({ delivery_fee_cents: 800, delivery_distance_by: 'route' });
+    expect(Number(o.delivery_distance_km)).toBeCloseTo(2.6, 2);
+  });
+
+  it('serviço de rotas fora do ar ou sem rota: usa a linha reta', async () => {
+    setRouter(async () => { throw new Error('respondeu 503'); });
+    expect((await quote('Rua Perto')).json()).toMatchObject({ deliveryFeeCents: 500, deliveryDistanceBy: 'straight' });
+    setRouter(async () => null);
+    const r = (await quote('Rua Media')).json();
+    expect(r).toMatchObject({ deliveryFeeCents: 800, deliveryDistanceBy: 'straight' });
+    expect(r.deliveryDistanceKm).toBeCloseTo(3.0, 1);
+  });
+
+  it('pela rota, fora das faixas não entrega', async () => {
+    setRouter(async () => 5400);
+    const res = await post(orderBody(f, { address: addr('Rua Media') }));
+    expect(res.json().error.message).toMatch(/5,4 km.*até 5,0 km/);
+  });
+
   it('painel testa um endereço e mostra cada tentativa', async () => {
     const h = await loginAs(app, 'gerente@t.local');
     setGeocoder(async (q) => (q.provider === 'photon' && q.q.includes('Rua Perto') ? { ...PLACES['Rua Perto'], label: 'Rua Perto, Indaiatuba' } : null));
     const r = (await app.inject({ method: 'POST', url: '/api/admin/settings/test-address', headers: h, payload: { street: 'Rua Perto', number: '10', city: 'Indaiatuba', state: 'SP', cep: '' } })).json();
     expect(r).toMatchObject({ found: { provider: 'photon', label: 'Rua Perto, Indaiatuba' }, feeCents: 500, outOfArea: false });
+    expect(r).toMatchObject({ distanceBy: 'straight', routingConfigured: false });
     expect(r.distanceKm).toBeCloseTo(1.0, 1);
     expect(r.trace.map((t: any) => `${t.provider} ${t.result}`)).toEqual(['nominatim não achou', 'nominatim não achou', 'photon achou']);
     const staff = await loginAs(app, 'atendente@t.local');

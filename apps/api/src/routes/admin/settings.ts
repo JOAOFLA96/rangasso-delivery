@@ -9,6 +9,7 @@ import { requireRole } from '../../auth.js';
 import { imageUrl } from '../../services/menu.js';
 import { getOpenState, getSettings } from '../../services/store.js';
 import { distanceKm, geocodeAddress, geocodeText, type GeoTry } from '../../services/geocode.js';
+import { deliveryDistance, routingEnabled } from '../../services/routing.js';
 import { distanceTiers } from '../../services/orders.js';
 
 const uuid = z.string().uuid();
@@ -85,7 +86,7 @@ export function settingsDto(s: any) {
     pixKey: s.pix_key, pixInstructions: s.pix_instructions, openMode: s.open_mode, printerModel: s.printer_model,
     printerConnection: s.printer_connection, printerHost: s.printer_host, printerPort: s.printer_port,
     printerWindowsName: s.printer_windows_name, autoPrint: s.auto_print, printCopies: s.print_copies, paperColumns: s.paper_columns,
-    receiptFooter: s.receipt_footer, acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods, acceptsPickup: s.accepts_pickup, updatedAt: s.updated_at,
+    receiptFooter: s.receipt_footer, acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods, acceptsPickup: s.accepts_pickup, routingConfigured: routingEnabled(), updatedAt: s.updated_at,
   };
 }
 
@@ -187,11 +188,13 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     const trace: GeoTry[] = [];
     const p = await geocodeAddress(pool, b, trace);
     const tiers = await distanceTiers(pool, storeId);
-    const km = p && s.store_lat != null && s.store_lng != null ? Math.round(distanceKm({ lat: s.store_lat, lng: s.store_lng }, p) * 100) / 100 : null;
+    const dist = p && s.store_lat != null && s.store_lng != null ? await deliveryDistance(pool, { lat: s.store_lat, lng: s.store_lng }, p) : null;
+    const km = dist?.km ?? null;
+    const straightKm = p && s.store_lat != null && s.store_lng != null ? Math.round(distanceKm({ lat: s.store_lat, lng: s.store_lng }, p) * 100) / 100 : null;
     const tier = km == null ? null : tiers.find((t) => km <= t.maxKm) ?? null;
     return {
       found: p ? { lat: p.lat, lng: p.lng, label: p.label, precision: p.precision, provider: p.provider } : null,
-      distanceKm: km, feeCents: tier?.feeCents ?? null, outOfArea: km != null && !tier, storeLocated: s.store_lat != null, trace,
+      distanceKm: km, distanceBy: dist?.by ?? null, routeError: dist?.error ?? null, routingConfigured: routingEnabled(), straightKm, feeCents: tier?.feeCents ?? null, outOfArea: km != null && !tier, storeLocated: s.store_lat != null, trace,
     };
   });
 

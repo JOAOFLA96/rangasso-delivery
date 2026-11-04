@@ -23,6 +23,8 @@ const schema = z.object({
   AGENT_BUNDLE_DIR: z.string().default('../agent/build'),
   // Serviço de mapas para achar o endereço do cliente na taxa por km (padrão: Nominatim/OpenStreetMap, gratuito, 1 consulta/s).
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
+  // Chave grátis do OpenRouteService (openrouteservice.org): taxa por km pela rota de carro. Sem ela, vale a linha reta.
+  ORS_API_KEY: z.string().trim().optional().default(''),
 });
 
 // Hospedagens que informam o endereço público sozinhas (Render, Railway): usa se PUBLIC_URL não foi definido.
