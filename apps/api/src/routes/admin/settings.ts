@@ -180,7 +180,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
   app.post('/settings/test-address', canEdit, async (req) => {
     const b = parse(z.object({
       street: z.string().trim().min(2).max(120), number: z.string().trim().max(15).default(''), city: z.string().trim().min(2).max(80),
-      state: z.string().trim().max(30).default(''), cep: z.string().max(12).default(''),
+      state: z.string().trim().max(30).default(''), cep: z.string().max(12).default(''), neighborhood: z.string().trim().max(80).default(''),
     }), req.body);
     const storeId = (req as any).admin.storeId;
     const s = await getSettings(pool, storeId);

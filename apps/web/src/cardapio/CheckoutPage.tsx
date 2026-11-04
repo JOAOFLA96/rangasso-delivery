@@ -283,14 +283,16 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
               <select id="f-neighborhoodId" value={form.neighborhoodId} onChange={(e) => set('neighborhoodId', e.target.value)} aria-invalid={!!errors.neighborhoodId}>
                 <option value="">Selecione o bairro</option>
                 {store.neighborhoods.map((n) => (
-                  <option key={n.id} value={n.id}>{n.name}{n.city ? ` (${n.city})` : ''} — {n.feePending ? 'taxa a combinar' : `taxa ${brl(n.feeCents)}`}</option>
+                  <option key={n.id} value={n.id}>{n.name}{n.city ? ` (${n.city})` : ''}{byDistance ? '' : ` — ${n.feePending ? 'taxa a combinar' : `taxa ${brl(n.feeCents)}`}`}</option>
                 ))}
                 {store.acceptUnlistedNeighborhoods && (
-                  <option value={NEW_HOOD}>{isNewHood && newHoodName ? `${newHoodName} — taxa a combinar` : 'Outro bairro (digitar)'}</option>
+                  <option value={NEW_HOOD}>{isNewHood && newHoodName ? `${newHoodName}${byDistance ? '' : ' — taxa a combinar'}` : 'Outro bairro (digitar)'}</option>
                 )}
               </select>
               <Err k="neighborhoodId" />
-              {store.acceptUnlistedNeighborhoods ? (
+              {byDistance ? (
+                <span className="hint">Digite o CEP e o endereço é preenchido sozinho. A taxa de entrega é calculada pela distância até a loja.</span>
+              ) : store.acceptUnlistedNeighborhoods ? (
                 <span className="hint">Digite o CEP e o endereço é preenchido sozinho. Se o seu bairro não estiver na lista, a taxa de entrega é combinada com a loja.</span>
               ) : (
                 <span className="hint">Seu bairro não está na lista? Ainda não entregamos aí{store.phone ? `. Dúvidas: ${store.phone}` : ''}.</span>
@@ -363,7 +365,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
             ) : (
               <div className="totals">
                 <div><span>Subtotal</span><span>{brl(quote?.subtotalCents)}</span></div>
-                {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{quote?.deliveryDistanceKm != null ? ` (${quote.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : hoodLabel ? ` (${hoodLabel})` : ''}</span><span>{feePending ? 'a combinar' : quote?.deliveryFeeCents == null ? 'selecione o bairro' : brl(quote.deliveryFeeCents)}</span></div>}
+                {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{quote?.deliveryDistanceKm != null ? ` (${quote.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : hoodLabel ? ` (${hoodLabel})` : ''}</span><span>{feePending ? (byDistance ? 'a combinar (endereço não achado no mapa)' : 'a combinar') : quote?.deliveryFeeCents == null ? 'selecione o bairro' : brl(quote.deliveryFeeCents)}</span></div>}
                 {quote && quote.discountCents > 0 && <div><span>Desconto</span><span>− {brl(quote.discountCents)}</span></div>}
                 {quote && quote.promoSavingsCents > 0 && <div className="muted small"><span>Você economizou com promoções</span><span>{brl(quote.promoSavingsCents)}</span></div>}
                 <div className="total"><span>{feePending ? 'Total (sem a taxa)' : 'Total'}</span><strong>{quote?.totalCents == null ? '—' : brl(quote.totalCents)}</strong></div>
