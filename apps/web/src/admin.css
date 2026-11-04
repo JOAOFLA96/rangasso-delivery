@@ -143,11 +143,12 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
 
 /* Celular: lista OU detalhe em tela cheia; abas de configuração viram rolagem horizontal. */
 @media (max-width: 860px) {
-  .a-top { flex-wrap: wrap; padding: 6px 12px; gap: 6px; }
+  .a-top { flex-wrap: wrap; justify-content: space-between; padding: 6px 12px; gap: 6px; }
   .a-logo { height: 24px; }
   .a-user-name { display: none; }
   .a-tabs { order: 3; flex-basis: 100%; }
-  .a-tabs a { flex: 1; justify-content: center; }
+  .a-tabs { overflow-x: auto; scrollbar-width: none; }
+  .a-tabs a { flex: 1 0 auto; justify-content: center; padding: 10px 10px; font-size: .92rem; }
   .a-orders { display: block; height: auto; }
   .a-list-pane { border: none; overflow: visible; }
   .a-detail-pane { display: none; }
@@ -172,3 +173,49 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
 .address-test { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .address-test-result { margin-top: 12px; }
 .pill-pickup { background: #fff1db; color: #8a4b00; }
+
+/* Etiquetas de validade 50 x 30 mm */
+.lbl-layout { display: grid; grid-template-columns: 1fr; gap: 16px; }
+@media (min-width: 1000px) { .lbl-layout { grid-template-columns: minmax(0, 1fr) 260px; } .lbl-preview-col { position: sticky; top: 76px; align-self: start; } }
+.lbl-preview-col h3 { margin: 0 0 8px; font-size: .9rem; text-transform: uppercase; color: var(--muted); }
+.lbl-preview { width: calc(50mm * 1.3); height: calc(30mm * 1.3); background: #fff; border: 1px dashed #b9b2ac; border-radius: 6px; box-shadow: var(--shadow); overflow: hidden; }
+.lbl-preview .lbl-sheet { transform: scale(1.3); transform-origin: top left; padding: 1.5mm; }
+.lbl-search { width: 100%; margin-bottom: 6px; min-height: 44px; }
+.lbl-search.grow { flex: 1; min-width: 220px; margin: 0; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
+.lbl-computed { display: flex; align-items: center; gap: 6px; min-height: 48px; font-weight: 700; font-size: 1.05rem; }
+.lbl-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.lbl-summary .card { display: grid; gap: 2px; padding: 12px; margin: 0 0 10px; }
+.lbl-summary span { font-size: .85rem; color: var(--muted); }
+.lbl-n { font-size: 1.6rem; }
+.lbl-n.err { color: var(--err); }
+.lbl-n.warn { color: var(--warn); }
+.lbl-b-used { background: #e7e5e4; color: #44403c; }
+.lbl-actions { justify-content: flex-end; gap: 4px; }
+.lbl-life-row { display: grid; grid-template-columns: 90px 80px 90px 1fr; gap: 8px; align-items: center; padding: 4px 0; }
+.lbl-life-row input, .lbl-life-row select { min-height: 42px; }
+.lbl-radio { display: inline-flex; gap: 6px; align-items: center; font-size: .9rem; }
+.lbl-help ol { padding-left: 20px; margin: 8px 0; display: grid; gap: 6px; }
+.lbl-help h3 { margin: 0; font-size: 1rem; }
+
+/* Face da etiqueta: medidas em mm/pt para sair igual na tela (prévia) e no papel. */
+.lbl-sheet { width: 50mm; height: 30mm; box-sizing: border-box; overflow: hidden; background: #fff; color: #000; }
+.lbl-face { height: 100%; display: flex; flex-direction: column; justify-content: space-between; font-family: Arial, Helvetica, sans-serif; line-height: 1.12; color: #000; overflow: hidden; }
+.lbl-name { font-size: 9pt; font-weight: 800; text-transform: uppercase; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.lbl-band { background: #000; color: #fff; font-size: 6.5pt; font-weight: 700; padding: .3mm 1mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.lbl-line { font-size: 7pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lbl-line > span:first-child, .lbl-two span span { font-weight: 700; }
+.lbl-exp { font-size: 8.5pt; font-weight: 800; }
+.lbl-two { display: flex; justify-content: space-between; gap: 1mm; }
+.lbl-two > span { overflow: hidden; text-overflow: ellipsis; }
+.lbl-foot { font-size: 5.5pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: .2mm solid #000; padding-top: .3mm; }
+.lbl-calib { border: .3mm solid #000; padding: 1mm; justify-content: flex-start; gap: .8mm; }
+
+.lbl-print-root { display: none; }
+@media print {
+  body.printing-labels { margin: 0; padding: 0; background: #fff; }
+  body.printing-labels > *:not(.lbl-print-root) { display: none !important; }
+  body.printing-labels .lbl-print-root { display: block; }
+  .lbl-page { width: 50mm; overflow: hidden; break-after: page; page-break-after: always; }
+  .lbl-page:last-child { break-after: auto; page-break-after: auto; }
+}
