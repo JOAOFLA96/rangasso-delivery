@@ -20,6 +20,7 @@ import { adminMenuRoutes } from './routes/admin/menu.js';
 import { adminSettingsRoutes } from './routes/admin/settings.js';
 import { adminPrinterRoutes } from './routes/admin/printer.js';
 import { adminUserRoutes } from './routes/admin/users.js';
+import { adminLabelRoutes } from './routes/admin/labels.js';
 
 export async function buildApp(opts: { logger?: boolean } = {}) {
   const app = Fastify({
@@ -90,6 +91,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       await admin.register(adminSettingsRoutes);
       await admin.register(adminPrinterRoutes);
       await admin.register(adminUserRoutes);
+      await admin.register(adminLabelRoutes);
     },
     { prefix: '/api/admin' },
   );

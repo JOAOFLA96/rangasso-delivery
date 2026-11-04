@@ -6,6 +6,7 @@ import { ToastProvider } from './ui';
 import { OrdersTab } from './OrdersTab';
 import { SettingsTab } from './settings/SettingsTab';
 import { ReviewsTab } from './ReviewsTab';
+import { LabelsTab } from './labels/LabelsTab';
 import '../admin.css';
 
 export default function AdminApp() {
@@ -42,6 +43,7 @@ export default function AdminApp() {
             <nav className="a-tabs" aria-label="Seções">
               <NavLink to="/admin/pedidos">Pedidos</NavLink>
               <NavLink to="/admin/avaliacoes">Avaliações</NavLink>
+              <NavLink to="/admin/etiquetas">Etiquetas</NavLink>
               <NavLink to="/admin/configuracoes">Configurações</NavLink>
             </nav>
             <div className="a-user">
@@ -52,6 +54,7 @@ export default function AdminApp() {
           <Routes>
             <Route path="pedidos/*" element={<OrdersTab />} />
             <Route path="avaliacoes" element={<ReviewsTab />} />
+            <Route path="etiquetas/*" element={<LabelsTab />} />
             <Route path="configuracoes/*" element={<SettingsTab />} />
             <Route path="*" element={<Navigate to="/admin/pedidos" replace />} />
           </Routes>
