@@ -97,6 +97,21 @@ export async function createPrintJob(
   return job as { id: string; kind: string; reprint_number: number };
 }
 
+// Agentes anteriores a esta versão não sabem desenhar etiqueta: não recebem trabalhos de etiqueta.
+export const LABEL_MIN_AGENT_VERSION = [1, 6, 0];
+
+// Etiqueta de validade (aba Etiquetas) enviada à impressora do agente. Uma etiqueta por corte, `copies` cópias.
+export async function createLabelPrintJob(db: Db, storeId: string, label: Record<string, unknown>, copies: number, requestedBy: string) {
+  const s = (await db.query('SELECT paper_columns, display_name, timezone FROM store_settings WHERE store_id = $1', [storeId])).rows[0];
+  const payload = { store: { name: s.display_name, timezone: s.timezone }, columns: s.paper_columns, label };
+  const job = (await db.query(
+    `INSERT INTO print_jobs (store_id, kind, copies, payload, requested_by) VALUES ($1,'label',$2,$3,$4) RETURNING id`,
+    [storeId, copies, JSON.stringify(payload), requestedBy],
+  )).rows[0];
+  await db.query(`INSERT INTO print_job_events (job_id, store_id, event, detail) VALUES ($1,$2,'created','label')`, [job.id, storeId]);
+  return job as { id: string };
+}
+
 // O status de impressão do pedido acompanha o trabalho mais recente (original ou reimpressão).
 export async function syncOrderPrintStatus(db: Db, orderId: string) {
   await db.query(
@@ -139,10 +154,13 @@ export async function claimJobs(storeId: string, deviceId: string, limit = 5) {
           AND j.id IN (
           SELECT id FROM print_jobs
            WHERE store_id = $1 AND status IN ('pending','failed') AND attempts < max_attempts AND next_attempt_at <= now()
+             AND (kind <> 'label' OR EXISTS (
+               SELECT 1 FROM print_devices d WHERE d.id = $2 AND d.agent_version ~ '^[0-9]+[.][0-9]+[.][0-9]+'
+                  AND (string_to_array(split_part(d.agent_version, '-', 1), '.'))::int[] >= $5::int[]))
            ORDER BY created_at
            LIMIT $3 FOR UPDATE SKIP LOCKED)
         RETURNING j.id, j.order_id, j.kind, j.reprint_number, j.copies, j.payload, j.attempts, j.created_at, j.claimed_at`,
-      [storeId, deviceId, limit, CLAIM_LEASE_SECONDS],
+      [storeId, deviceId, limit, CLAIM_LEASE_SECONDS, LABEL_MIN_AGENT_VERSION],
     );
     for (const j of r.rows) {
       await client.query(`INSERT INTO print_job_events (job_id, store_id, device_id, event, detail) VALUES ($1,$2,$3,'claimed',$4)`, [j.id, storeId, deviceId, `tentativa ${j.attempts}`]);

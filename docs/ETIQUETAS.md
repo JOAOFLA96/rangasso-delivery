@@ -18,7 +18,15 @@ Pelo navegador (Chrome/Edge): cada etiqueta é uma página `@page 50mm x 30mm`. 
 No driver: papel 50 x 30 mm, tipo etiqueta com espaço (gap) de 4 mm. No diálogo: Margens **Nenhuma**, Escala **Padrão**, sem cabeçalhos/rodapés.
 Sem diálogo: atalho do Chrome com `--kiosk-printing`. A Epson TM-T20 (cupom) não imprime essas etiquetas.
 
+## Pela Epson TM-T20 do caixa (quebra-galho)
+Na tela Imprimir, "Imprimir em: Epson do caixa (bobina)". O painel cria um trabalho `label` na fila do agente (o mesmo das comandas),
+e o agente desenha a etiqueta em ESC/POS na bobina de 80 mm, com **um corte por etiqueta** (até 50 cópias). Reimprimir em Vencimentos usa o mesmo lote.
+- Precisa do agente **1.6.0+** (atualiza sozinho). Agentes mais antigos não recebem etiquetas (continuam recebendo comandas).
+- Não sai no formato 50 x 30: a TM-T20 não tem sensor de espaço. Use bobina comum (prender com fita) ou bobina adesiva contínua de 80 mm; adesivo desgasta a guilhotina.
+- Etiquetas entram na fila junto com os pedidos: em horário de pico, prefira imprimir antes do serviço.
+
 ## Testado
 - API: `apps/api/test/labels.test.ts` (permissões, cálculo da validade, lotes, validações, baixa).
 - Navegador: `e2e/etiquetas.spec.ts` gera o PDF de impressão e confere 1 página por etiqueta em 50 x 30 mm.
-- **Não testado em impressora de etiqueta física.**
+- Agente: `apps/agent/test/receipt.test.ts` (conteúdo, largura 32/42/48, corte por cópia, acentos/grau em CP860); `apps/api/test/print.test.ts` (fila só para agente 1.6.0+).
+- **Não testado em impressora física** (nem de etiqueta, nem a etiqueta na TM-T20).

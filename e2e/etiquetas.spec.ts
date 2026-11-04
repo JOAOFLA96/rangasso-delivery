@@ -14,6 +14,8 @@ async function login(page: Page) {
 
 test.beforeEach(async () => {
   await db.query(`DELETE FROM label_prints`);
+  await db.query(`DELETE FROM print_job_events WHERE job_id IN (SELECT id FROM print_jobs WHERE kind = 'label')`);
+  await db.query(`DELETE FROM print_jobs WHERE kind = 'label'`);
   await db.query(`DELETE FROM label_products`);
 });
 
@@ -43,6 +45,7 @@ test('etiquetas: cadastra prazo, imprime 50x30 mm com lote e dá baixa no vencim
   await expect(page.locator('.lbl-computed')).toContainText('(3 dias)');
   await page.getByRole('button', { name: 'Mais' }).click();
   await page.getByRole('button', { name: 'Mais' }).click();
+  await page.getByRole('button', { name: 'Impressora de etiqueta 50x30' }).click();
   await page.getByRole('button', { name: 'Imprimir 3 etiquetas' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__prints)).toBe(1);
 
@@ -73,4 +76,23 @@ test('etiquetas: cadastra prazo, imprime 50x30 mm com lote e dá baixa no vencim
   await page.getByRole('button', { name: 'Dar baixa' }).click();
   await expect(page.getByText('Nenhuma etiqueta ativa')).toBeVisible();
   expect((await db.query(`SELECT status FROM label_prints`)).rows[0].status).toBe('used');
+});
+
+test('etiquetas pela Epson do caixa: vai para a fila do agente, sem abrir a impressão do navegador', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).__prints = 0;
+    window.print = () => { (window as any).__prints++; };
+  });
+  await login(page);
+  await page.goto('/admin/etiquetas/imprimir');
+  await page.getByLabel('Nome do produto').fill('Cebola caramelizada');
+  await page.locator('input[type="datetime-local"]').nth(1).fill('2030-01-10T10:00');
+  await page.getByRole('button', { name: 'Epson do caixa (bobina)' }).click();
+  await page.getByRole('button', { name: 'Mais' }).click();
+  await page.getByRole('button', { name: 'Imprimir 2 etiquetas' }).click();
+  await expect(page.getByText(/enviado para a Epson/)).toBeVisible();
+  const job = (await db.query(`SELECT kind, copies, payload FROM print_jobs WHERE kind = 'label'`)).rows[0];
+  expect(job).toMatchObject({ kind: 'label', copies: 2 });
+  expect(job.payload.label.productName).toBe('Cebola caramelizada');
+  expect(await page.evaluate(() => (window as any).__prints)).toBe(0);
 });

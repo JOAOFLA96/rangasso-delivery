@@ -226,3 +226,51 @@ describe('agente de impressão', () => {
     expect(Date.now() - t0).toBeLessThan(8000);
   }, 15_000);
 });
+
+describe('etiquetas de validade pela Epson (agente)', () => {
+  const printLabel = (extra: object = {}) => app.inject({
+    method: 'POST', url: '/api/admin/labels/prints', headers: admin,
+    payload: { productName: 'Molho da casa', storage: 'chilled', responsible: 'Carlos', handledAt: new Date(Date.now() - 60_000).toISOString(),
+      manualExpiresAt: new Date(Date.now() + 48 * 3600_000).toISOString(), quantityText: '1 kg', copies: 3, target: 'agent', ...extra },
+  });
+  const setVersion = (v: string | null) => pool.query('UPDATE print_devices SET agent_version = $2 WHERE id = $1', [deviceId, v]);
+
+  it('vira trabalho de impressão com os dados da etiqueta e só vai para agente 1.6.0 ou mais novo', async () => {
+    const r = await printLabel();
+    expect(r.statusCode, r.body).toBe(200);
+    const { jobId, print } = r.json();
+    expect(jobId).toBeTruthy();
+
+    await setVersion('1.5.0');
+    expect((await claim()).json().jobs).toEqual([]);
+    await setVersion(null);
+    expect((await claim()).json().jobs).toEqual([]);
+    await setVersion('1.6.0');
+    const jobs = (await claim()).json().jobs;
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ id: jobId, kind: 'label', copies: 3 });
+    expect(jobs[0].payload.label).toMatchObject({ productName: 'Molho da casa', lot: print.lot, responsible: 'Carlos', quantityText: '1 kg', storage: 'chilled' });
+    expect(jobs[0].payload.store.timezone).toBe('America/Sao_Paulo');
+    expect((await report(jobId, 'printed')).statusCode).toBe(200);
+
+    const queue = (await app.inject({ method: 'GET', url: '/api/admin/printer/status', headers: admin })).json().queue;
+    expect(queue[0]).toMatchObject({ kind: 'label', status: 'printed', label_lot: print.lot, label_product: 'Molho da casa' });
+  });
+
+  it('agente antigo continua recebendo as comandas; navegador não cria trabalho; reimpressão mantém o lote', async () => {
+    await setVersion('1.5.0');
+    await printLabel();
+    await newOrder();
+    const jobs = (await claim()).json().jobs;
+    expect(jobs.map((j: any) => j.kind)).toEqual(['original']);
+
+    const browser = (await printLabel({ target: 'browser' })).json();
+    expect(browser.jobId).toBeNull();
+    const re = await app.inject({ method: 'POST', url: `/api/admin/labels/prints/${browser.print.id}/agent`, headers: admin, payload: { copies: 2 } });
+    expect(re.statusCode, re.body).toBe(200);
+    await setVersion('1.6.1');
+    const labelJobs = (await claim()).json().jobs.filter((j: any) => j.id === re.json().jobId);
+    expect(labelJobs[0]).toMatchObject({ kind: 'label', copies: 2 });
+    expect(labelJobs[0].payload.label.lot).toBe(browser.print.lot);
+  });
+});

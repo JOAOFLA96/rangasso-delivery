@@ -228,7 +228,7 @@ export class Agent {
 
   async handleJob(job: ServerJob) {
     const key = `${job.id}@${job.claimId}`;
-    const label = job.kind === 'test' ? `teste ${job.id.slice(0, 8)}` : `pedido #${job.payload?.order?.number ?? '?'}${job.kind === 'reprint' ? ` (reimpressão ${job.reprintNumber})` : ''}`;
+    const label = job.kind === 'label' ? `etiqueta ${job.payload?.label?.lot ?? job.id.slice(0, 8)}` : job.kind === 'test' ? `teste ${job.id.slice(0, 8)}` : `pedido #${job.payload?.order?.number ?? '?'}${job.kind === 'reprint' ? ` (reimpressão ${job.reprintNumber})` : ''}`;
     const prev = this.journal.get(key);
     if (prev) {
       // Mesmo trabalho e mesma reserva já tratados: nunca imprimir de novo, só reenviar o resultado.

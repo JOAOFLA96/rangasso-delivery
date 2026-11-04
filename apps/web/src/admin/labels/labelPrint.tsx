@@ -84,6 +84,13 @@ export const DEFAULT_PREFS: PrintPrefs = { mode: 'gap', gapMm: 4, marginMm: 1.5,
 export const loadPrefs = (): PrintPrefs => ({ ...DEFAULT_PREFS, ...storage.get<Partial<PrintPrefs>>(PREFS_KEY, {}) });
 export const savePrefs = (p: PrintPrefs) => storage.set(PREFS_KEY, p);
 
+// Onde imprimir: Epson do caixa pelo agente (bobina com corte) ou navegador (impressora de etiqueta 50x30).
+export type PrintTarget = 'agent' | 'browser';
+const TARGET_KEY = 'rg_label_target';
+export const loadTarget = (): PrintTarget => (storage.get<string>(TARGET_KEY, 'agent') === 'browser' ? 'browser' : 'agent');
+export const saveTarget = (t: PrintTarget) => storage.set(TARGET_KEY, t);
+export const TARGET_LABELS: Record<PrintTarget, string> = { agent: 'Epson do caixa (bobina)', browser: 'Impressora de etiqueta 50x30' };
+
 type Job = { kind: 'labels'; items: LabelData[]; storeName: string } | { kind: 'calibration'; copies: number };
 
 // Monta as etiquetas fora da tela e abre a janela de impressão do navegador.

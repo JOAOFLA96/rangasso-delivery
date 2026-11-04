@@ -4,8 +4,8 @@ import { api, formatDateTime, storage } from '../../lib/api';
 import { canManage, useSession } from '../session';
 import { Confirm, Modal, Toggle, errorText, useToast } from '../ui';
 import {
-  DEFAULT_PREFS, LabelFace, STORAGE_LABELS, TYPE_LABELS, formatShelfLife, labelDate, loadPrefs, savePrefs, toLocalInput, useLabelPrinter,
-  type LabelData, type LabelType, type PrintPrefs, type Storage,
+  DEFAULT_PREFS, LabelFace, STORAGE_LABELS, TARGET_LABELS, TYPE_LABELS, loadTarget, saveTarget, formatShelfLife, labelDate, loadPrefs, savePrefs, toLocalInput, useLabelPrinter,
+  type LabelData, type LabelType, type PrintPrefs, type PrintTarget, type Storage,
 } from './labelPrint';
 
 interface LabelProduct {
@@ -77,6 +77,8 @@ function PrintForm({ catalog, onPrinted, printer }: { catalog: CatalogData; onPr
   const [copies, setCopies] = useState(1);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState('');
+  const [target, setTargetState] = useState<PrintTarget>(loadTarget);
+  const setTarget = (t: PrintTarget) => { setTargetState(t); saveTarget(t); };
 
   const product = active.find((p) => p.id === productId) ?? null;
   const productHours = product ? hoursOf(product, storageSel) : null;
@@ -119,12 +121,16 @@ function PrintForm({ catalog, onPrinted, printer }: { catalog: CatalogData; onPr
         body: {
           productId: product?.id ?? null, productName: product ? '' : freeName.trim(), labelType, storage: storageSel,
           handledAt: handledIso, manualExpiresAt: useManual ? expiresIso : null, responsible: responsible.trim(),
-          quantityText: quantityText.trim(), extra: extra.trim(), copies,
+          quantityText: quantityText.trim(), extra: extra.trim(), copies, target,
         },
       });
       storage.set('rg_label_responsible', responsible.trim());
-      printer.printLabels({ ...r.print, notes: product?.notes }, copies, catalog.store.name);
-      toast(`Lote ${r.print.lot} registrado. Imprimindo ${copies} etiqueta(s)…`);
+      if (target === 'browser') {
+        printer.printLabels({ ...r.print, notes: product?.notes }, copies, catalog.store.name);
+        toast(`Lote ${r.print.lot} registrado. Imprimindo ${copies} etiqueta(s)…`);
+      } else {
+        toast(`Lote ${r.print.lot} enviado para a Epson (${copies} etiqueta${copies > 1 ? 's' : ''}). Acompanhe em Configurações › Impressora.`);
+      }
       onPrinted();
     } catch (e) {
       toast(errorText(e), 'error');
@@ -201,6 +207,14 @@ function PrintForm({ catalog, onPrinted, printer }: { catalog: CatalogData; onPr
             <button type="button" onClick={() => setCopies((c) => Math.min(50, c + 1))} aria-label="Mais">+</button>
           </div>
         </div>
+        <div className="field"><span>Imprimir em</span>
+          <div className="chips wrap">
+            {(['agent', 'browser'] as PrintTarget[]).map((t) => (
+              <button type="button" key={t} className={`chip ${target === t ? 'active' : ''}`} onClick={() => setTarget(t)}>{TARGET_LABELS[t]}</button>
+            ))}
+          </div>
+          {target === 'agent' && <p className="muted small">Sai na Epson pelo agente, uma etiqueta por corte (papel de 80 mm, não fica 50x30). Use bobina comum e prenda com fita, ou bobina adesiva contínua.</p>}
+        </div>
         <button className="btn btn-primary btn-lg btn-block" disabled={busy || printer.busy} onClick={submit}>
           {busy ? 'Registrando…' : `Imprimir ${copies} etiqueta${copies > 1 ? 's' : ''}`}
         </button>
@@ -235,6 +249,16 @@ function ExpiryList({ storeName, printer }: { storeName: string; printer: Printe
   }, [showAll, q, toast]);
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
   useEffect(() => { const t = setInterval(load, 60_000); return () => clearInterval(t); }, [load]);
+
+  async function reprint(p: LabelPrint) {
+    if (loadTarget() === 'browser') return printer.printLabels(p, 1, storeName);
+    try {
+      await api(`/api/admin/labels/prints/${p.id}/agent`, { body: { copies: 1 } });
+      toast(`Lote ${p.lot} enviado para a Epson`);
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+  }
 
   function badge(p: LabelPrint) {
     if (p.status === 'used') return <span className="badge lbl-b-used">Usado</span>;
@@ -271,7 +295,7 @@ function ExpiryList({ storeName, printer }: { storeName: string; printer: Printe
               <td>{p.lot}<div className="muted small">{p.responsible}{p.copies > 1 ? ` · ${p.copies} etiq.` : ''}</div></td>
               <td>
                 <div className="a-row wrap lbl-actions">
-                  <button className="btn btn-secondary btn-sm" disabled={printer.busy} onClick={() => printer.printLabels(p, 1, storeName)}>Reimprimir</button>
+                  <button className="btn btn-secondary btn-sm" disabled={printer.busy} onClick={() => reprint(p)}>Reimprimir</button>
                   {p.status === 'active' && <>
                     <button className="btn btn-secondary btn-sm" onClick={() => setClosing({ p, status: 'used' })}>Usado</button>
                     <button className="btn btn-secondary btn-sm" onClick={() => setClosing({ p, status: 'discarded' })}>Descartar</button>
@@ -406,6 +430,7 @@ function PrintAdjust({ printer }: { printer: Printer }) {
   return (
     <div>
       <h2>Ajustes de impressão</h2>
+      <p className="alert alert-info">Estes ajustes valem para a <strong>impressora de etiqueta 50x30</strong> (impressão pelo navegador). Na Epson do caixa, a etiqueta sai pelo agente com o layout da bobina e corte automático; ela precisa do agente 1.6.0 ou mais novo, que se atualiza sozinho.</p>
       <p className="muted small">Ficam salvos neste computador/navegador. Etiqueta: 50 x 30 mm com {p.gapMm} mm de espaço entre uma e outra.</p>
       <div className="field"><span>Tipo de papel</span>
         <div className="chips wrap">
@@ -437,7 +462,7 @@ function PrintAdjust({ printer }: { printer: Printer }) {
           <li>Imprima o teste de alinhamento. Se a moldura sair cortada ou torta, ajuste os deslocamentos acima.</li>
           <li>Opcional: para imprimir sem a janela de confirmação, abra o painel por um atalho do Chrome com <code>--kiosk-printing</code> (usa a última impressora escolhida).</li>
         </ol>
-        <p className="muted small">A Epson TM-T20 do caixa é de cupom (rolo contínuo de 80 mm) e não serve para etiqueta 50 x 30 mm.</p>
+        <p className="muted small">A Epson TM-T20 do caixa é de cupom (bobina contínua de 80 mm), sem sensor de espaço: não imprime em rolo de etiqueta 50 x 30 mm. Nela, use a opção "Epson do caixa (bobina)" na tela Imprimir.</p>
       </section>
     </div>
   );
