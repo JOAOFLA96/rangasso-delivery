@@ -190,19 +190,19 @@ export async function distanceTiers(db: Db, storeId: string) {
 async function resolveDelivery(db: Db, storeId: string, settings: any, ref: HoodRef, addr: GeoAddress | null, create: boolean) {
   if (settings.delivery_fee_mode === 'distance' && settings.store_lat != null && settings.store_lng != null && addr) {
     const tiers = await distanceTiers(db, storeId);
-    const point = tiers.length ? await geocodeAddress(db, addr) : null;
+    // O bairro aqui é só parte do endereço (e último recurso para localizar); bairro desativado pela loja continua fora da área.
+    let hood: any = null;
+    if (ref.id) hood = (await db.query('SELECT * FROM neighborhoods WHERE id = $1 AND store_id = $2', [ref.id, storeId])).rows[0] ?? null;
+    else if (ref.name) hood = (await db.query('SELECT * FROM neighborhoods WHERE store_id = $1', [storeId])).rows.find((n) => normalizeName(n.name) === normalizeName(ref.name!)) ?? null;
+    const name = hood?.name ?? cleanText(ref.name ?? '', 80);
+    const point = tiers.length ? await geocodeAddress(db, { ...addr, neighborhood: name }) : null;
     if (point) {
       const km = Math.round(distanceKm({ lat: settings.store_lat, lng: settings.store_lng }, point) * 100) / 100;
       const tier = tiers.find((t) => km <= t.maxKm);
       if (!tier) {
         throw badRequest('area_not_served', `Seu endereço fica a ${fmtKm(km)} km da loja. Entregamos até ${fmtKm(tiers[tiers.length - 1].maxKm)} km.`);
       }
-      // O bairro aqui é só parte do endereço; bairro desativado pela loja continua fora da área.
-      let hood: any = null;
-      if (ref.id) hood = (await db.query('SELECT * FROM neighborhoods WHERE id = $1 AND store_id = $2', [ref.id, storeId])).rows[0] ?? null;
-      else if (ref.name) hood = (await db.query('SELECT * FROM neighborhoods WHERE store_id = $1', [storeId])).rows.find((n) => normalizeName(n.name) === normalizeName(ref.name!)) ?? null;
       if (hood && !hood.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
-      const name = hood?.name ?? cleanText(ref.name ?? '', 80);
       if (!name) throw badRequest('area_not_served', 'Selecione o bairro.', { field: 'address.neighborhoodId' });
       return {
         hood: hood ?? { id: null, name, city: cleanText(ref.city ?? '', 80), min_order_cents: null },

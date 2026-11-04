@@ -5,8 +5,8 @@ import { normalizeName, onlyDigits } from '../lib/text.js';
 // Localização de endereços para a taxa por km, com serviços gratuitos tentados em sequência (Nominatim e Photon, do
 // OpenStreetMap, e a coordenada do CEP pela AwesomeAPI). Respeita os limites de uso com fila e cache dos resultados.
 
-export interface GeoAddress { street: string; number: string; city: string; state: string; cep: string }
-export interface GeoPoint { lat: number; lng: number; precision: 'number' | 'street' | 'cep'; label: string; provider: Provider }
+export interface GeoAddress { street: string; number: string; city: string; state: string; cep: string; neighborhood?: string }
+export interface GeoPoint { lat: number; lng: number; precision: 'number' | 'street' | 'cep' | 'bairro'; label: string; provider: Provider }
 export type Provider = 'nominatim' | 'photon' | 'cep';
 // q traz o serviço em q.provider; o resto são os parâmetros da busca.
 export type GeocodeFn = (q: Record<string, string>) => Promise<{ lat: number; lng: number; label: string } | null>;
@@ -17,6 +17,10 @@ const NEGATIVE_TTL_MS = 6 * 3600_000;
 const MAX_WAITING = 8; // fila cheia (pico ou abuso): não espera, o pedido usa a taxa do bairro
 const PHOTON_URL = 'https://photon.komoot.io';
 const CEP_URL = 'https://cep.awesomeapi.com.br';
+// O Nominatim bloqueia (429) o IP compartilhado da hospedagem com frequência: depois de um 429, pula esse serviço por um tempo
+// em vez de gastar uma tentativa (e o tempo do cliente) em cada pedido.
+const COOLDOWN_MS = 15 * 60_000;
+const cooldownUntil: Partial<Record<Provider, number>> = {};
 
 // Uma fila por serviço: uma consulta por vez, com intervalo mínimo entre elas.
 const queues: Record<Provider, { last: number; queue: Promise<unknown>; waiting: number; gap: number }> = {
@@ -45,7 +49,7 @@ async function getJson(url: URL) {
     signal: AbortSignal.timeout(6000),
   });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`respondeu ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(`respondeu ${res.status}`), { status: res.status });
   return res.json() as Promise<any>;
 }
 
@@ -87,8 +91,16 @@ async function cepApi(q: Record<string, string>) {
   return { lat, lng, label: [data.address, data.district, data.city, data.state].filter(Boolean).join(', ') };
 }
 
-const live: GeocodeFn = ({ provider, ...q }) =>
-  throttled(provider as Provider, () => (provider === 'photon' ? photon(q) : provider === 'cep' ? cepApi(q) : nominatim(q)));
+const live: GeocodeFn = async ({ provider, ...q }) => {
+  const p = provider as Provider;
+  if ((cooldownUntil[p] ?? 0) > Date.now()) throw new Error('pausado após limite de uso (429)');
+  try {
+    return await throttled(p, () => (p === 'photon' ? photon(q) : p === 'cep' ? cepApi(q) : nominatim(q)));
+  } catch (e) {
+    if ((e as { status?: number }).status === 429) cooldownUntil[p] = Date.now() + COOLDOWN_MS;
+    throw e;
+  }
+};
 
 let geocodeFn: GeocodeFn = live;
 
@@ -150,7 +162,7 @@ async function firstHit(db: Db, attempts: Attempt[], trace?: GeoTry[]): Promise<
   return null;
 }
 
-// Tenta, nesta ordem: rua e número; só a rua; o endereço escrito (Photon); a coordenada do CEP.
+// Tenta, nesta ordem: rua e número; só a rua (Nominatim); os mesmos no Photon; a coordenada do CEP; o centro do bairro.
 // Devolve null se nenhum achar (ou se os serviços falharem): o pedido segue pela taxa do bairro.
 export async function geocodeAddress(db: Db, a: GeoAddress, trace?: GeoTry[]): Promise<GeoPoint | null> {
   const street = expandStreet(a.street.trim());
@@ -162,8 +174,14 @@ export async function geocodeAddress(db: Db, a: GeoAddress, trace?: GeoTry[]): P
   const place = { ...(city ? { city } : {}), ...(state ? { state } : {}), country: 'Brasil' };
   if (street && city && number) attempts.push({ precision: 'number', q: { provider: 'nominatim', street: `${number} ${street}`, ...place } });
   if (street && city) attempts.push({ precision: 'street', q: { provider: 'nominatim', street, ...place } });
-  if (street && city) attempts.push({ precision: number ? 'number' : 'street', q: { provider: 'photon', q: `${street}${number ? ` ${number}` : ''}, ${city}${state ? ` ${state}` : ''}`, city } });
+  const tail = `${city}${state ? ` ${state}` : ''}`;
+  if (street && city && number) attempts.push({ precision: 'number', q: { provider: 'photon', q: `${street} ${number}, ${tail}`, city } });
+  // Só a rua: o Photon às vezes não acha o número (ou acha outro lugar) e a rua sozinha, sim.
+  if (street && city) attempts.push({ precision: 'street', q: { provider: 'photon', q: `${street}, ${tail}`, city } });
   if (cep.length === 8) attempts.push({ precision: 'cep', q: { provider: 'cep', cep } });
+  // Último recurso: o centro do bairro. Distância aproximada, mas melhor do que deixar a taxa "a combinar".
+  const hood = a.neighborhood?.trim();
+  if (hood && city) attempts.push({ precision: 'bairro', q: { provider: 'photon', q: `${hood}, ${tail}`, city } });
   return firstHit(db, attempts, trace);
 }
 

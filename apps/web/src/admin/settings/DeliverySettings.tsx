@@ -198,7 +198,7 @@ const PROVIDER_NAMES: Record<string, string> = { nominatim: 'OpenStreetMap', pho
 // Testa um endereço de cliente com a regra que o pedido usa (salve antes as faixas e o ponto da loja).
 function AddressTest() {
   const toast = useToast();
-  const [f, setF] = useState({ cep: '', street: '', number: '', city: '', state: 'SP' });
+  const [f, setF] = useState({ cep: '', street: '', number: '', neighborhood: '', city: '', state: 'SP' });
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<AddressTestResult | null>(null);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
@@ -208,7 +208,7 @@ function AddressTest() {
     if (cep.length !== 8) return;
     try {
       const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`).then((x) => x.json());
-      if (!r.erro) setF((x) => ({ ...x, street: r.logradouro || x.street, city: r.localidade || x.city, state: r.uf || x.state }));
+      if (!r.erro) setF((x) => ({ ...x, street: r.logradouro || x.street, neighborhood: r.bairro || x.neighborhood, city: r.localidade || x.city, state: r.uf || x.state }));
     } catch { /* sem CEP automático: preenche à mão */ }
   }
 
@@ -233,6 +233,7 @@ function AddressTest() {
         <label className="field"><span>Número</span><input id="t-number" value={f.number} onChange={set('number')} /></label>
       </div>
       <label className="field"><span>Rua do cliente</span><input id="t-street" value={f.street} onChange={set('street')} /></label>
+      <label className="field"><span>Bairro do cliente</span><input id="t-neighborhood" value={f.neighborhood} onChange={set('neighborhood')} /></label>
       <div className="grid-2">
         <label className="field"><span>Cidade do cliente</span><input id="t-city" value={f.city} onChange={set('city')} /></label>
         <label className="field"><span>UF</span><input id="t-state" value={f.state} maxLength={2} onChange={set('state')} /></label>
@@ -244,7 +245,7 @@ function AddressTest() {
             : !res.found ? <p className="alert alert-warning">Endereço não encontrado no mapa. Esse pedido sairia com a taxa do bairro.</p>
             : res.outOfArea ? <p className="alert alert-warning">{kmText(res.distanceKm!)} km da loja: fora das faixas, o pedido seria recusado.</p>
             : <p className="alert alert-info"><strong>{kmText(res.distanceKm!)} km da loja · taxa {res.feeCents == null ? '—' : brl(res.feeCents)}</strong><br />
-                Achado: {res.found.label} ({PROVIDER_NAMES[res.found.provider] ?? res.found.provider}{res.found.precision === 'cep' ? ', pelo CEP' : res.found.precision === 'street' ? ', só pela rua' : ''})</p>}
+                Achado: {res.found.label} ({PROVIDER_NAMES[res.found.provider] ?? res.found.provider}{res.found.precision === 'cep' ? ', pelo CEP' : res.found.precision === 'street' ? ', só pela rua' : res.found.precision === 'bairro' ? ', pelo centro do bairro: distância aproximada' : ''})</p>}
           <ul className="muted small">
             {res.trace.map((t, i) => (
               <li key={i}>{PROVIDER_NAMES[t.provider] ?? t.provider}: {t.result}{t.detail && t.result === 'erro' ? ` (${t.detail})` : ''}{t.cached ? ' (guardado)' : ''}</li>

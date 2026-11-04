@@ -128,6 +128,22 @@ describe('taxa por km', () => {
     expect(o).toMatchObject({ delivery_fee_cents: 800, delivery_fee_source: 'distance' });
   });
 
+  it('checkout com número: OpenStreetMap em 429 e Photon sem achar o número ainda calcula pela rua', async () => {
+    setGeocoder(async (q) => {
+      if (q.provider === 'nominatim') throw new Error('respondeu 429');
+      if (q.provider === 'photon' && q.q === 'Rua Media, Indaiatuba SP') return { ...PLACES['Rua Media'], label: 'Rua Media' };
+      return null; // com o número, o Photon não acha
+    });
+    expect((await quote('Rua Media')).json()).toMatchObject({ deliveryFeeCents: 800, deliveryFeePending: false });
+  });
+
+  it('último recurso: centro do bairro, inclusive bairro fora da lista', async () => {
+    await pool.query('UPDATE store_settings SET accept_unlisted_neighborhoods = true');
+    setGeocoder(async (q) => (q.provider === 'photon' && q.q === 'Jardim Novo, Indaiatuba SP' ? { ...PLACES['Rua Perto'], label: 'Jardim Novo' } : null));
+    const r = await app.inject({ method: 'POST', url: '/api/public/quote', payload: { items: orderBody(f).items, neighborhoodName: 'Jardim Novo', city: 'Indaiatuba', address: { street: 'Rua Sem Mapa', number: '787', city: 'Indaiatuba', state: 'SP', cep: '' } } });
+    expect(r.json()).toMatchObject({ deliveryFeeCents: 500, deliveryFeePending: false });
+  });
+
   it('painel testa um endereço e mostra cada tentativa', async () => {
     const h = await loginAs(app, 'gerente@t.local');
     setGeocoder(async (q) => (q.provider === 'photon' && q.q.includes('Rua Perto') ? { ...PLACES['Rua Perto'], label: 'Rua Perto, Indaiatuba' } : null));

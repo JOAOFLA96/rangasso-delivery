@@ -206,6 +206,8 @@ test('taxa por km: calcula pela distância do endereço até a loja', async ({ p
     await page.getByLabel('Número').fill('50');
     await expect(page.locator('.totals')).toContainText('(3,0 km)');
     await expect(page.locator('.totals')).toContainText('R$ 9,90');
+    // Na taxa por km o bairro não promete "taxa a combinar".
+    await expect(page.locator('#f-neighborhoodId option:checked')).not.toContainText('combinar');
   } finally {
     await db.query(`UPDATE store_settings SET delivery_fee_mode = 'neighborhood'`);
   }
