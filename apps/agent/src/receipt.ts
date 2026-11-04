@@ -20,7 +20,8 @@ export interface ReceiptPayload {
     subtotalCents: number;
     deliveryFeeCents: number;
     deliveryFeePending?: boolean; // bairro novo, taxa ainda não definida pela loja
-    deliveryDistanceKm?: number | null; // taxa por km: distância em linha reta da loja
+    deliveryDistanceKm?: number | null; // taxa por km: distância da loja (pelas ruas ou em linha reta)
+    deliveryDistanceBy?: 'route' | 'straight' | null;
     discountCents: number;
     totalCents: number;
     paymentMethod: 'cash' | 'pix' | 'card';

@@ -138,9 +138,12 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
       {mode === 'distance' && (
         <>
           <p className="muted small">
-            O sistema acha o endereço do cliente no mapa (OpenStreetMap ou, se não achar, pelo CEP) e mede a distância em linha reta até a loja. Pelas ruas, o caminho
-            costuma ser 20% a 40% maior: leve isso em conta nas faixas. Se o endereço não for encontrado, vale a taxa do bairro.
+            O sistema acha o endereço do cliente no mapa e mede a distância de carro pelas ruas até a loja (OpenRouteService). Se o serviço de rotas
+            falhar, mede em linha reta, que costuma ser 20% a 40% menor. Se o endereço não for encontrado, vale a taxa do bairro.
           </p>
+          {data.settings.routingConfigured
+            ? <p className="hint">✓ Distância pelas ruas ativada.</p>
+            : <p className="alert alert-warning">Distância pelas ruas desligada: falta a chave grátis do OpenRouteService (variável ORS_API_KEY na hospedagem). Por enquanto a distância é em linha reta.</p>}
           <label className="field"><span>Endereço da loja</span>
             <input value={address} maxLength={200} disabled={!manage} onChange={(e) => setAddress(e.target.value)} placeholder="Rua, número - bairro, cidade - UF, CEP" />
           </label>
@@ -190,7 +193,8 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
 
 interface AddressTestResult {
   found: { lat: number; lng: number; label: string; precision: string; provider: string } | null;
-  distanceKm: number | null; feeCents: number | null; outOfArea: boolean; storeLocated: boolean;
+  distanceKm: number | null; distanceBy: 'route' | 'straight' | null; routeError: string | null; routingConfigured: boolean; straightKm: number | null;
+  feeCents: number | null; outOfArea: boolean; storeLocated: boolean;
   trace: { provider: string; query: string; result: string; detail?: string; cached?: boolean }[];
 }
 const PROVIDER_NAMES: Record<string, string> = { nominatim: 'OpenStreetMap', photon: 'Photon', cep: 'CEP' };
@@ -244,7 +248,9 @@ function AddressTest() {
           {!res.storeLocated ? <p className="alert alert-warning">A loja ainda não tem latitude e longitude salvas.</p>
             : !res.found ? <p className="alert alert-warning">Endereço não encontrado no mapa. Esse pedido sairia com a taxa do bairro.</p>
             : res.outOfArea ? <p className="alert alert-warning">{kmText(res.distanceKm!)} km da loja: fora das faixas, o pedido seria recusado.</p>
-            : <p className="alert alert-info"><strong>{kmText(res.distanceKm!)} km da loja · taxa {res.feeCents == null ? '—' : brl(res.feeCents)}</strong><br />
+            : <p className="alert alert-info"><strong>{kmText(res.distanceKm!)} km da loja {res.distanceBy === 'route' ? 'pelas ruas' : 'em linha reta'} · taxa {res.feeCents == null ? '—' : brl(res.feeCents)}</strong><br />
+                {res.distanceBy === 'route' && res.straightKm != null && <>Em linha reta: {kmText(res.straightKm)} km.<br /></>}
+                {res.distanceBy === 'straight' && res.routingConfigured && <>Rota pelas ruas falhou{res.routeError ? ` (${res.routeError})` : ''}: usada a linha reta.<br /></>}
                 Achado: {res.found.label} ({PROVIDER_NAMES[res.found.provider] ?? res.found.provider}{res.found.precision === 'cep' ? ', pelo CEP' : res.found.precision === 'street' ? ', só pela rua' : res.found.precision === 'bairro' ? ', pelo centro do bairro: distância aproximada' : ''})</p>}
           <ul className="muted small">
             {res.trace.map((t, i) => (
