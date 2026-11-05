@@ -97,7 +97,7 @@ export function PrinterSettings() {
           <tbody>
             {status?.queue.map((j) => (
               <tr key={j.id}>
-                <td>{j.kind === 'label' ? `Etiqueta ${j.label_product ?? ''} (${j.label_lot ?? ''})` : j.kind === 'test' ? 'Teste' : `#${j.order_number}${j.kind === 'reprint' ? ` (reimpressão ${j.reprint_number})` : ''}`}</td>
+                <td>{j.kind === 'label' ? (j.label_lot ? `Etiqueta ${j.label_product ?? ''} (${j.label_lot})` : 'Etiqueta (teste)') : j.kind === 'test' ? 'Teste' : `#${j.order_number}${j.kind === 'reprint' ? ` (reimpressão ${j.reprint_number})` : ''}`}</td>
                 <td>{formatDateTime(j.created_at)}</td>
                 <td><span className={`pill pill-sm ${PRINT[j.status].cls}`}>{PRINT[j.status].label}</span>{j.last_error && j.status !== 'printed' && <div className="field-error small">{j.last_error}</div>}</td>
                 <td>{j.attempts}/{j.max_attempts}</td>

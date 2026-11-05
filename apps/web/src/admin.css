@@ -219,3 +219,5 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
   .lbl-page { width: 50mm; overflow: hidden; break-after: page; page-break-after: always; }
   .lbl-page:last-child { break-after: auto; page-break-after: auto; }
 }
+.lbl-h3 { margin: 18px 0 6px; font-size: 1.05rem; }
+.lbl-h3.first { margin-top: 0; }

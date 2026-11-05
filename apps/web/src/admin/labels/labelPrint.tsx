@@ -88,12 +88,16 @@ export const DEFAULT_PREFS: PrintPrefs = { mode: 'gap', gapMm: 4, marginMm: 1.5,
 export const loadPrefs = (): PrintPrefs => ({ ...DEFAULT_PREFS, ...storage.get<Partial<PrintPrefs>>(PREFS_KEY, {}) });
 export const savePrefs = (p: PrintPrefs) => storage.set(PREFS_KEY, p);
 
-// Onde imprimir: Epson do caixa pelo agente (bobina com corte) ou navegador (impressora de etiqueta 50x30).
-export type PrintTarget = 'agent' | 'browser';
+// Onde imprimir: tspl = impressora de etiquetas USB pelo agente (recomendado, usa o sensor de espaço);
+// browser = impressora de etiqueta pelo navegador; agent = Epson do caixa (bobina com corte).
+export type PrintTarget = 'tspl' | 'browser' | 'agent';
 const TARGET_KEY = 'rg_label_target';
-export const loadTarget = (): PrintTarget => (storage.get<string>(TARGET_KEY, 'agent') === 'browser' ? 'browser' : 'agent');
+export const loadTarget = (): PrintTarget => {
+  const v = storage.get<string>(TARGET_KEY, 'tspl');
+  return v === 'browser' || v === 'agent' ? v : 'tspl';
+};
 export const saveTarget = (t: PrintTarget) => storage.set(TARGET_KEY, t);
-export const TARGET_LABELS: Record<PrintTarget, string> = { agent: 'Epson do caixa (bobina)', browser: 'Impressora de etiqueta 50x30' };
+export const TARGET_LABELS: Record<PrintTarget, string> = { tspl: 'Impressora de etiqueta (direto)', browser: 'Impressora de etiqueta (navegador)', agent: 'Epson do caixa (bobina)' };
 
 type Job = { kind: 'labels'; items: LabelData[]; storeName: string } | { kind: 'calibration'; copies: number };
 

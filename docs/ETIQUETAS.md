@@ -18,6 +18,14 @@ Pelo navegador (Chrome/Edge): cada etiqueta é uma página `@page 50mm x 30mm`. 
 No driver: papel 50 x 30 mm, tipo etiqueta com espaço (gap) de 4 mm. No diálogo: Margens **Nenhuma**, Escala **Padrão**, sem cabeçalhos/rodapés.
 Sem diálogo: atalho do Chrome com `--kiosk-printing`. A Epson TM-T20 (cupom) não imprime essas etiquetas.
 
+## Impressora de etiquetas direto (TSPL, recomendado)
+Para impressoras térmicas de etiqueta com comandos **TSPL** (OIA-B381, Xprinter, Elgin, Argox e similares) ligadas por USB a um PC com o agente.
+- Configure em **Etiquetas › Ajustes**: PC do agente, nome da impressora no Windows, tamanho (50 x 30), espaço (4 mm), velocidade (2 recomendado), densidade (10 a 12), deslocamentos e giro 180°.
+- O agente envia `SIZE 50 mm,30 mm` + `GAP 4 mm,0 mm` + `SPEED`/`DENSITY` + o texto + `PRINT 1,N`, em RAW pelo spooler do Windows. A impressora usa o sensor de espaço a cada etiqueta, então não "anda" de uma para outra.
+- O trabalho vai só para o agente escolhido (`print_jobs.target_device_id`); comandas continuam indo para qualquer agente.
+- Texto sem acento (as fontes internas dos modelos genéricos não têm acento).
+- Botão "Salvar e imprimir teste (3)" imprime 3 etiquetas com moldura para conferir alinhamento.
+
 ## Pela Epson TM-T20 do caixa (quebra-galho)
 Na tela Imprimir, "Imprimir em: Epson do caixa (bobina)". O painel cria um trabalho `label` na fila do agente (o mesmo das comandas),
 e o agente desenha a etiqueta em ESC/POS na bobina de 80 mm, com **um corte por etiqueta** (até 50 cópias). Reimprimir em Vencimentos usa o mesmo lote.
@@ -29,4 +37,5 @@ e o agente desenha a etiqueta em ESC/POS na bobina de 80 mm, com **um corte por 
 - API: `apps/api/test/labels.test.ts` (permissões, cálculo da validade, lotes, validações, baixa).
 - Navegador: `e2e/etiquetas.spec.ts` gera o PDF de impressão e confere 1 página por etiqueta em 50 x 30 mm.
 - Agente: `apps/agent/test/receipt.test.ts` (conteúdo, largura 32/42/48, corte por cópia, acentos/grau em CP860); `apps/api/test/print.test.ts` (fila só para agente 1.6.0+).
+- TSPL: `apps/agent/test/tspl.test.ts` (comandos, coordenadas dentro de 400x240 pontos, limites, envio para a impressora indicada) e `apps/api/test/print.test.ts` (só o agente escolhido recebe).
 - **Não testado em impressora física** (nem de etiqueta, nem a etiqueta na TM-T20).
