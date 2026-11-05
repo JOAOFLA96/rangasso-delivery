@@ -170,3 +170,22 @@ test('avaliações aparecem no painel', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Avaliações dos clientes' })).toBeVisible();
   await noHorizontalScroll(page);
 });
+
+test('aviso na tela de pedidos quando o agente de impressão para de responder', async ({ page }) => {
+  const store = (await db.query('SELECT store_id FROM store_settings LIMIT 1')).rows[0].store_id;
+  const prefix = `e2eoff${Date.now()}`.slice(0, 10);
+  const dev = (await db.query(
+    `INSERT INTO print_devices (store_id, name, token_hash, token_prefix, last_seen_at) VALUES ($1, 'Caixa teste', $2, $3, now() - interval '2 hours') RETURNING id`,
+    [store, `hash-${prefix}-${Math.random()}`, prefix],
+  )).rows[0].id;
+  // Outro agente online (de outro teste) esconderia o aviso: deixa só este ativo durante o teste.
+  const others = (await db.query(`UPDATE print_devices SET revoked_at = now() WHERE store_id = $1 AND id <> $2 AND revoked_at IS NULL RETURNING id`, [store, dev])).rows.map((r) => r.id);
+  try {
+    await login(page);
+    await expect(page.locator('.agent-offline')).toContainText('Impressora do caixa sem agente');
+    await expect(page.locator('.agent-offline')).toContainText('Rangasso - Agente de Impressão');
+  } finally {
+    await db.query('DELETE FROM print_devices WHERE id = $1', [dev]);
+    if (others.length) await db.query('UPDATE print_devices SET revoked_at = NULL WHERE id = ANY($1)', [others]);
+  }
+});
