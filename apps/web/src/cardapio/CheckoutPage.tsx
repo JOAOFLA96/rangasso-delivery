@@ -36,8 +36,9 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   const [quote, setQuote] = useState<Quote | null>(null);
   const canPush = useMemo(() => pushSupported() && Notification.permission !== 'denied', []);
   const [notify, setNotify] = useState(true);
-  const [quoteError, setQuoteError] = useState<{ message: string; productId?: string } | null>(null);
+  const [quoteError, setQuoteError] = useState<{ message: string; productId?: string; code?: string } | null>(null);
   const [cepInfo, setCepInfo] = useState<string | null>(null);
+  const [cepNoStreet, setCepNoStreet] = useState(false); // CEP geral da cidade: o cliente digita a rua
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Chave de idempotência: reaproveitada se o último envio teve resultado desconhecido (queda de rede) com os mesmos dados.
@@ -64,7 +65,9 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   useEffect(() => {
     if (!items.length) return;
     const ctrl = new AbortController();
-    const hoodRef = isNewHood
+    const hoodRef = byDistance
+      ? { neighborhoodName: form.neighborhoodName.trim() || null, city: form.city || null }
+      : isNewHood
       ? { neighborhoodId: null, neighborhoodName: newHoodName.length >= 2 ? newHoodName : null, city: form.city || null }
       : { neighborhoodId: form.neighborhoodId || null };
     const address = debouncedAddr ? JSON.parse(debouncedAddr) : null;
@@ -77,10 +80,10 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       .catch((e) => {
         if (e.name === 'AbortError') return;
         setQuote(null);
-        setQuoteError({ message: e.message, productId: e.details?.productId });
+        setQuoteError({ message: e.message, productId: e.details?.productId, code: e.code });
       });
     return () => ctrl.abort();
-  }, [items, form.neighborhoodId, isNewHood, newHoodName, form.city, debouncedAddr, pickup]);
+  }, [items, form.neighborhoodId, isNewHood, newHoodName, form.city, debouncedAddr, pickup, byDistance, form.neighborhoodName]);
 
   // Busca de CEP no ViaCEP (serviço público): preenche rua e bairro. Bairro fora da lista entra com taxa a combinar
   // (se a loja aceitar); a loja define a taxa depois no painel.
@@ -95,7 +98,15 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       .then((r) => r.json())
       .then((r) => {
         if (r.erro) {
-          setCepInfo('CEP não encontrado. Preencha o endereço manualmente.');
+          setCepInfo(byDistance ? 'CEP não encontrado. Confira o número do CEP.' : 'CEP não encontrado. Preencha o endereço manualmente.');
+          return;
+        }
+        if (byDistance) {
+          // Taxa por km: o endereço vem só do CEP (o cliente não escolhe bairro).
+          setCepNoStreet(!r.logradouro);
+          setForm((f) => ({ ...f, street: r.logradouro || '', city: r.localidade || '', state: r.uf || '', neighborhoodId: '', neighborhoodName: r.bairro || '' }));
+          setErrors((e) => ({ ...e, cep: '', street: '' }));
+          setCepInfo(null);
           return;
         }
         setForm((f) => ({ ...f, street: r.logradouro || f.street, city: r.localidade || f.city, state: r.uf || f.state }));
@@ -115,7 +126,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       })
       .catch(() => setCepInfo(null));
     return () => ctrl.abort();
-  }, [form.cep, store.neighborhoods, store.acceptUnlistedNeighborhoods]);
+  }, [form.cep, store.neighborhoods, store.acceptUnlistedNeighborhoods, byDistance]);
 
   if (!cart.lines.length) {
     return (
@@ -138,11 +149,18 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     const ph = digits(form.phone);
     if (!(ph.length === 10 || (ph.length === 11 && ph[2] === '9'))) e.phone = 'Telefone com DDD, ex.: (11) 98765-4321.';
     if (!pickup) {
-      if (form.cep && digits(form.cep).length !== 8) e.cep = 'CEP com 8 dígitos.';
-      if (form.street.trim().length < 2) e.street = 'Informe a rua.';
-      if (!form.number.trim()) e.number = 'Informe o número (ou "s/n").';
-      if (!form.neighborhoodId) e.neighborhoodId = 'Selecione o bairro.';
-      else if (isNewHood && newHoodName.length < 2) e.neighborhoodName = 'Digite o nome do bairro.';
+      if (byDistance) {
+        if (digits(form.cep).length !== 8) e.cep = 'Informe o CEP com 8 dígitos.';
+        else if (cepInfo) e.cep = cepInfo;
+        else if (form.street.trim().length < 2) e[cepNoStreet ? 'street' : 'cep'] = cepNoStreet ? 'Informe a rua.' : 'Aguarde o CEP ser localizado.';
+        if (!form.number.trim()) e.number = 'Informe o número da casa (ou "s/n").';
+      } else {
+        if (form.cep && digits(form.cep).length !== 8) e.cep = 'CEP com 8 dígitos.';
+        if (form.street.trim().length < 2) e.street = 'Informe a rua.';
+        if (!form.number.trim()) e.number = 'Informe o número (ou "s/n").';
+        if (!form.neighborhoodId) e.neighborhoodId = 'Selecione o bairro.';
+        else if (isNewHood && newHoodName.length < 2) e.neighborhoodName = 'Digite o nome do bairro.';
+      }
     }
     if (!form.payment) e.payment = 'Escolha a forma de pagamento.';
     if (form.payment === 'cash' && form.needChange) {
@@ -170,7 +188,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     const payload = {
       customer: { name: form.name.trim(), phone: form.phone },
       fulfillment: mode,
-      address: pickup ? null : { cep: form.cep, street: form.street.trim(), number: form.number.trim(), ...(isNewHood ? { neighborhoodName: newHoodName } : { neighborhoodId: form.neighborhoodId }), city: form.city.trim(), state: form.state, complement: form.complement.trim(), reference: form.reference.trim() },
+      address: pickup ? null : { cep: form.cep, street: form.street.trim(), number: form.number.trim(), ...(byDistance ? { neighborhoodName: form.neighborhoodName.trim() } : isNewHood ? { neighborhoodName: newHoodName } : { neighborhoodId: form.neighborhoodId }), city: form.city.trim(), state: form.state, complement: form.complement.trim(), reference: form.reference.trim() },
       notes: form.notes.trim(),
       payment: { method: form.payment, changeForCents: form.payment === 'cash' && form.needChange ? moneyToCents(form.changeFor) : null },
       items,
@@ -208,6 +226,8 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   const hood = store.neighborhoods.find((n) => n.id === form.neighborhoodId);
   const hoodLabel = hood?.name ?? (newHoodName || null);
   const feePending = !!quote?.deliveryFeePending;
+  // Endereço que o mapa não achou ou fora da área: aparece junto do endereço.
+  const addressError = quoteError && (quoteError.code === 'address_not_found' || quoteError.code === 'area_not_served') ? quoteError.message : null;
   const Err = ({ k }: { k: string }) => (errors[k] ? <span className="field-error" role="alert">{errors[k]}</span> : null);
 
   return (
@@ -254,7 +274,48 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
             </section>
           )}
 
-          {!pickup && <section className="card">
+          {!pickup && byDistance && <section className="card">
+            <h2>Entrega</h2>
+            <div className="field-row">
+              <label className="field">
+                <span>CEP</span>
+                <input id="f-cep" inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" value={form.cep} onChange={(e) => set('cep', maskCep(e.target.value))} aria-invalid={!!errors.cep} />
+                <Err k="cep" />
+              </label>
+              <label className="field">
+                <span>Número</span>
+                <input id="f-number" inputMode="text" value={form.number} onChange={(e) => set('number', e.target.value)} maxLength={15} aria-invalid={!!errors.number} />
+                <Err k="number" />
+              </label>
+            </div>
+            {cepInfo && <p className="alert alert-warning" role="alert">{cepInfo}</p>}
+            {cepNoStreet && (
+              <label className="field">
+                <span>Rua</span>
+                <input id="f-street" autoComplete="address-line1" value={form.street} onChange={(e) => set('street', e.target.value)} maxLength={120} aria-invalid={!!errors.street} />
+                <Err k="street" />
+                <span className="hint">Esse CEP é da cidade toda: digite o nome da rua.</span>
+              </label>
+            )}
+            {form.street && form.city && digits(form.cep).length === 8 && !cepInfo && (
+              <p className="address-found" id="f-address-found">
+                📍 <strong>{form.street}{form.number.trim() ? `, ${form.number.trim()}` : ''}</strong>
+                {form.neighborhoodName ? ` – ${form.neighborhoodName}` : ''}, {form.city}{form.state ? `/${form.state}` : ''}
+              </p>
+            )}
+            {addressError && <p className="alert alert-error" role="alert">{addressError}</p>}
+            <label className="field">
+              <span>Complemento <em className="muted">(opcional)</em></span>
+              <input id="f-complement" autoComplete="address-line2" placeholder="Apto, bloco…" value={form.complement} onChange={(e) => set('complement', e.target.value)} maxLength={80} />
+            </label>
+            <label className="field">
+              <span>Ponto de referência <em className="muted">(opcional)</em></span>
+              <input id="f-reference" value={form.reference} onChange={(e) => set('reference', e.target.value)} maxLength={120} />
+            </label>
+            <span className="hint">A taxa de entrega é calculada sozinha pela distância de carro do seu endereço até a loja.</span>
+            {store.deliveryInstructions && <p className="hint">{store.deliveryInstructions}</p>}
+          </section>}
+          {!pickup && !byDistance && <section className="card">
             <h2>Entrega</h2>
             <label className="field">
               <span>CEP <em className="muted">(opcional)</em></span>

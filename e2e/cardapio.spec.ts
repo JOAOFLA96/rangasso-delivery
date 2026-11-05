@@ -202,12 +202,13 @@ test('taxa por km: calcula pela distância do endereço até a loja', async ({ p
     await page.getByRole('button', { name: /Ver carrinho/ }).click();
     await page.getByRole('button', { name: 'Finalizar pedido' }).click();
     await page.locator('#f-cep').pressSequentially('01310100');
-    await expect(page.locator('#f-city')).toHaveValue('São Paulo');
+    // Só CEP e número: sem escolher bairro; o endereço achado aparece antes de enviar.
+    await expect(page.locator('#f-address-found')).toContainText('Avenida do CEP');
+    await expect(page.locator('#f-address-found')).toContainText('Jardim do CEP, São Paulo/SP');
+    await expect(page.locator('#f-neighborhoodId')).toHaveCount(0);
     await page.getByLabel('Número').fill('50');
     await expect(page.locator('.totals')).toContainText('(3,0 km)');
     await expect(page.locator('.totals')).toContainText('R$ 9,90');
-    // Na taxa por km o bairro não promete "taxa a combinar".
-    await expect(page.locator('#f-neighborhoodId option:checked')).not.toContainText('combinar');
   } finally {
     await db.query(`UPDATE store_settings SET delivery_fee_mode = 'neighborhood'`);
   }

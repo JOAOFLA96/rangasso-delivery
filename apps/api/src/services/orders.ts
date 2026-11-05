@@ -10,7 +10,8 @@ import { effectivePrice } from './pricing.js';
 import { getOpenState, getSettings } from './store.js';
 import { createPrintJob } from './print.js';
 import { geocodeAddress, type GeoAddress } from './geocode.js';
-import { deliveryDistance } from './routing.js';
+import { deliveryDistance, type Distance } from './routing.js';
+import { addressLine, googleDistance, googleEnabled } from './google.js';
 
 export const ORDER_STATUSES = ['received', 'confirmed', 'preparing', 'out_for_delivery', 'completed', 'cancelled'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -47,12 +48,12 @@ export const createOrderSchema = z.object({
     number: z.string().min(1).max(15),
     // Bairro da lista (id) ou o nome vindo do CEP/digitado, quando a loja aceita bairros fora da lista.
     neighborhoodId: z.string().uuid().optional(),
-    neighborhoodName: z.string().trim().min(2).max(80).optional(),
+    neighborhoodName: z.string().trim().max(80).optional(),
     city: z.string().trim().max(80).optional().default(''),
     state: z.string().trim().max(30).optional().default(''),
     complement: z.string().max(80).optional().default(''),
     reference: z.string().max(120).optional().default(''),
-  }).refine((a) => a.neighborhoodId || a.neighborhoodName, { path: ['neighborhoodId'], message: 'Selecione o bairro.' }).nullable().optional(),
+  }).nullable().optional(), // bairro: obrigatório só na taxa por bairro (o servidor confere)
   notes: z.string().max(300).optional().default(''),
   payment: z.object({
     method: z.enum(['cash', 'pix', 'card']),
@@ -186,32 +187,82 @@ export async function distanceTiers(db: Db, storeId: string) {
   return r.rows.map((t) => ({ maxKm: Number(t.max_km), feeCents: t.fee_cents as number }));
 }
 
-// Taxa de entrega. No modo "por km" (loja localizada e com faixas cadastradas), acha o endereço do cliente e cobra a faixa
-// da distância de carro pelas ruas (ou em linha reta, se o serviço de rotas falhar). Se o endereço não for encontrado, vale a regra do bairro (taxa do bairro ou "a combinar").
+export interface FeeRule { pricing: 'tiers' | 'per_km'; tiers: { maxKm: number; feeCents: number }[]; perKmCents: number; minFeeCents: number; maxKm: number | null }
+
+export async function feeRule(db: Db, storeId: string, settings: any): Promise<FeeRule> {
+  return {
+    pricing: settings.distance_pricing === 'per_km' ? 'per_km' : 'tiers', tiers: await distanceTiers(db, storeId),
+    perKmCents: settings.price_per_km_cents ?? 0, minFeeCents: settings.distance_min_fee_cents ?? 0,
+    maxKm: settings.distance_max_km == null ? null : Number(settings.distance_max_km),
+  };
+}
+export const ruleReady = (r: FeeRule) => (r.pricing === 'tiers' ? r.tiers.length > 0 : r.perKmCents > 0);
+
+// Taxa para uma distância: a faixa em que cai, ou km × valor do km (no mínimo a taxa mínima). null = fora da área.
+export function feeForKm(r: FeeRule, km: number): number | null {
+  if (r.pricing === 'per_km') {
+    if (r.maxKm != null && km > r.maxKm) return null;
+    return Math.max(r.minFeeCents, Math.round(km * r.perKmCents));
+  }
+  return r.tiers.find((t) => km <= t.maxKm)?.feeCents ?? null;
+}
+export function areaLimitKm(r: FeeRule) {
+  return r.pricing === 'per_km' ? r.maxKm : r.tiers[r.tiers.length - 1]?.maxKm ?? null;
+}
+
+// Taxa de entrega. No modo "por km" (loja localizada e regra de cobrança cadastrada), mede a distância de carro até o cliente.
+// Com a chave do Google Maps, só o Google vale: se ele não achar o endereço, o cliente confere o CEP e o número. Sem a chave,
+// usa os mapas grátis (e o OpenRouteService ou a linha reta); se não achar, vale a regra do bairro.
 async function resolveDelivery(db: Db, storeId: string, settings: any, ref: HoodRef, addr: GeoAddress | null, create: boolean) {
   if (settings.delivery_fee_mode === 'distance' && settings.store_lat != null && settings.store_lng != null && addr) {
-    const tiers = await distanceTiers(db, storeId);
-    // O bairro aqui é só parte do endereço (e último recurso para localizar); bairro desativado pela loja continua fora da área.
+    const rule = await feeRule(db, storeId, settings);
+    // O bairro aqui é só parte do endereço (vem do CEP); bairro desativado pela loja continua fora da área.
     let hood: any = null;
     if (ref.id) hood = (await db.query('SELECT * FROM neighborhoods WHERE id = $1 AND store_id = $2', [ref.id, storeId])).rows[0] ?? null;
     else if (ref.name) hood = (await db.query('SELECT * FROM neighborhoods WHERE store_id = $1', [storeId])).rows.find((n) => normalizeName(n.name) === normalizeName(ref.name!)) ?? null;
     const name = hood?.name ?? cleanText(ref.name ?? '', 80);
-    const point = tiers.length ? await geocodeAddress(db, { ...addr, neighborhood: name }) : null;
-    if (point) {
-      const dist = await deliveryDistance(db, { lat: settings.store_lat, lng: settings.store_lng }, point);
+    const store = { lat: settings.store_lat, lng: settings.store_lng };
+    const full = { ...addr, neighborhood: name };
+    let dist: Distance | null = null;
+    if (ruleReady(rule)) {
+      if (googleEnabled()) {
+        const g = await googleDistance(db, store, addressLine(full));
+        if (!g) throw badRequest('address_not_found', 'Não encontramos esse endereço no mapa. Confira o CEP e o número da casa.', { field: 'address.cep' });
+        dist = { km: g.km, by: 'route' };
+      } else {
+        const point = await geocodeAddress(db, full);
+        if (point) dist = await deliveryDistance(db, store, point);
+      }
+    }
+    if (dist) {
       const km = dist.km;
-      const tier = tiers.find((t) => km <= t.maxKm);
-      if (!tier) {
-        throw badRequest('area_not_served', `Seu endereço fica a ${fmtKm(km)} km da loja. Entregamos até ${fmtKm(tiers[tiers.length - 1].maxKm)} km.`);
+      const fee = feeForKm(rule, km);
+      if (fee == null) {
+        const limit = areaLimitKm(rule);
+        throw badRequest('area_not_served', `Seu endereço fica a ${fmtKm(km)} km da loja.${limit != null ? ` Entregamos até ${fmtKm(limit)} km.` : ''}`);
       }
       if (hood && !hood.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
-      if (!name) throw badRequest('area_not_served', 'Selecione o bairro.', { field: 'address.neighborhoodId' });
+      // Cadastro automático: bairro novo entra (ou bairro "a combinar" é atualizado) com a taxa desta distância.
+      // Bairro com taxa definida pela loja não é alterado. Serve de referência no painel e de reserva sem mapa.
+      if (create && name && (hood ? hood.fee_pending : settings.accept_unlisted_neighborhoods)) {
+        const city = hood?.city ?? cleanText(ref.city ?? addr.city ?? '', 80);
+        const r = await db.query(
+          `INSERT INTO neighborhoods (store_id, name, city, fee_cents, fee_pending, sort_order)
+           VALUES ($1,$2,$3,$4,false,(SELECT coalesce(max(sort_order),0)+10 FROM neighborhoods WHERE store_id = $1))
+           ON CONFLICT (store_id, lower(name), lower(city)) DO UPDATE SET fee_cents = EXCLUDED.fee_cents, fee_pending = false
+             WHERE neighborhoods.fee_pending
+           RETURNING *`,
+          [storeId, name, city, fee],
+        );
+        hood = r.rows[0] ?? hood ?? (await db.query('SELECT * FROM neighborhoods WHERE store_id = $1 AND lower(name) = lower($2) AND lower(city) = lower($3)', [storeId, name, city])).rows[0];
+      }
       return {
-        hood: hood ?? { id: null, name, city: cleanText(ref.city ?? '', 80), min_order_cents: null },
-        fee: tier.feeCents, feePending: false, distanceKm: km, distanceBy: dist.by as 'route' | 'straight' | null, source: 'distance' as const,
+        hood: hood ?? { id: null, name, city: cleanText(ref.city ?? addr.city ?? '', 80), min_order_cents: null },
+        fee, feePending: false, distanceKm: km, distanceBy: dist.by as 'route' | 'straight' | null, source: 'distance' as const,
       };
     }
   }
+  if (!ref.id && !ref.name) throw badRequest('area_not_served', 'Selecione o bairro.', { field: 'address.neighborhoodId' });
   const n = await resolveHood(db, storeId, settings, ref, create);
   if (!n || !n.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.', { field: 'address.neighborhoodId' });
   const feePending = !!n.fee_pending;
@@ -237,8 +288,8 @@ export async function quote(db: Db, storeId: string, items: CreateOrderInput['it
   if (pickup) {
     if (!settings.accepts_pickup) throw badRequest('pickup_not_accepted', 'A retirada na loja não está disponível no momento.', { field: 'fulfillment' });
     fee = 0;
-  } else if (hoodRef && (hoodRef.id || hoodRef.name)) {
-    const d = await resolveDelivery(db, storeId, settings, hoodRef, addr, false);
+  } else if ((hoodRef && (hoodRef.id || hoodRef.name)) || (addr && settings.delivery_fee_mode === 'distance')) {
+    const d = await resolveDelivery(db, storeId, settings, hoodRef ?? {}, addr, false);
     feePending = d.feePending;
     fee = d.fee;
     km = d.distanceKm;
