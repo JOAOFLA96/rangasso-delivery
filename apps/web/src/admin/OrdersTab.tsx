@@ -27,6 +27,17 @@ export function OrdersTab() {
   const [soundOn, setSoundOn] = useState(false);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
   const reqId = useRef(0);
+  const [agent, setAgent] = useState<AgentStatus | null>(null);
+  const loadAgent = useCallback(async () => {
+    try {
+      setAgent(agentStatus(await api<PrinterStatus>('/api/admin/printer/status')));
+    } catch { /* sem permissão ou sem rede: não mostra o aviso */ }
+  }, []);
+  useEffect(() => {
+    loadAgent();
+    const t = setInterval(loadAgent, 30_000);
+    return () => clearInterval(t);
+  }, [loadAgent]);
 
   const load = useCallback(async () => {
     const id = ++reqId.current;
@@ -66,6 +77,7 @@ export function OrdersTab() {
         toast(`Novo pedido #${data.number}`, 'info');
         setNewIds((s) => new Set(s).add(data.orderId));
       }
+      if (type === 'agent.updated' || type.startsWith('print.')) loadAgent();
       if (type !== 'agent.updated' && type !== 'print.queued') {
         load();
         setDetailVersion((v) => v + 1);
@@ -130,6 +142,13 @@ export function OrdersTab() {
           </div>
         )}
 
+        {agent?.offline && (
+          <div className="alert alert-error agent-offline" role="alert">
+            <strong>🖨 Impressora do caixa sem agente</strong>: o computador do caixa não responde
+            {agent.lastSeen ? ` desde ${formatDateTime(agent.lastSeen)}` : ''}{agent.waiting ? ` e há ${agent.waiting} comanda(s) esperando` : ''}.
+            Confira se o computador está ligado e com internet, ou reinicie o serviço "Rangasso - Agente de Impressão".
+          </div>
+        )}
         {error && <div className="alert alert-error">{error} <button className="btn btn-link" onClick={load}>Tentar de novo</button></div>}
         {loading && !orders.length ? (
           <p className="muted pad">Carregando pedidos…</p>
@@ -184,4 +203,18 @@ function Elapsed({ since }: { since: string }) {
   }, []);
   const min = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 60000));
   return <span className={`oc-elapsed ${min >= 45 ? 'late' : min >= 30 ? 'warn' : ''}`}>há {min} min</span>;
+}
+
+interface PrinterStatus {
+  devices: { revoked_at: string | null; last_seen_at: string | null; online: boolean }[];
+  queue: { status: string }[];
+}
+interface AgentStatus { offline: boolean; lastSeen: string | null; waiting: number }
+
+// Agente offline: há credencial ativa, nenhuma respondeu nos últimos 90 s. Sem agente cadastrado, não avisa (loja sem impressão).
+export function agentStatus(s: PrinterStatus): AgentStatus {
+  const active = s.devices.filter((d) => !d.revoked_at);
+  const waiting = s.queue.filter((j) => j.status === 'pending' || j.status === 'failed').length;
+  const lastSeen = active.map((d) => d.last_seen_at).filter(Boolean).sort().pop() ?? null;
+  return { offline: active.length > 0 && !active.some((d) => d.online), lastSeen, waiting };
 }
