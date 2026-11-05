@@ -60,13 +60,14 @@ export function LabelFace({ data, storeName }: { data: LabelData; storeName: str
   );
 }
 
-function CalibrationFace() {
+function CalibrationFace({ n, total }: { n: number; total: number }) {
   return (
     <div className="lbl-face lbl-calib">
-      <div className="lbl-name">TESTE 50 x 30 mm</div>
-      <div className="lbl-line">A moldura deve ficar inteira,</div>
-      <div className="lbl-line">sem cortar nas bordas.</div>
-      <div className="lbl-line">Ajuste os deslocamentos se precisar.</div>
+      <div className="lbl-name">TESTE {n}/{total} · 50 x 30 mm</div>
+      <div className="lbl-line">A moldura deve ficar inteira e na</div>
+      <div className="lbl-line">mesma posição em todas as etiquetas.</div>
+      <div className="lbl-line">Se descer a cada uma: avanço maior.</div>
+      <div className="lbl-line">Se subir a cada uma: avanço menor.</div>
     </div>
   );
 }
@@ -78,11 +79,25 @@ export interface PrintPrefs {
   marginMm: number;
   offsetXmm: number;
   offsetYmm: number;
+  // Correção do avanço por etiqueta: soma (ou tira) mm na altura de cada página.
+  // Etiqueta que desce um pouco a cada impressão = página maior que o passo do rolo -> valor negativo.
+  pitchAdjustMm: number;
 }
 const PREFS_KEY = 'rg_label_print_prefs';
-export const DEFAULT_PREFS: PrintPrefs = { mode: 'gap', gapMm: 4, marginMm: 1.5, offsetXmm: 0, offsetYmm: 0 };
+export const DEFAULT_PREFS: PrintPrefs = { mode: 'gap', gapMm: 4, marginMm: 1.5, offsetXmm: 0, offsetYmm: 0, pitchAdjustMm: 0 };
 export const loadPrefs = (): PrintPrefs => ({ ...DEFAULT_PREFS, ...storage.get<Partial<PrintPrefs>>(PREFS_KEY, {}) });
 export const savePrefs = (p: PrintPrefs) => storage.set(PREFS_KEY, p);
+
+// Onde imprimir: tspl = impressora de etiquetas USB pelo agente (recomendado, usa o sensor de espaço);
+// browser = impressora de etiqueta pelo navegador; agent = Epson do caixa (bobina com corte).
+export type PrintTarget = 'tspl' | 'browser' | 'agent';
+const TARGET_KEY = 'rg_label_target';
+export const loadTarget = (): PrintTarget => {
+  const v = storage.get<string>(TARGET_KEY, 'tspl');
+  return v === 'browser' || v === 'agent' ? v : 'tspl';
+};
+export const saveTarget = (t: PrintTarget) => storage.set(TARGET_KEY, t);
+export const TARGET_LABELS: Record<PrintTarget, string> = { tspl: 'Impressora de etiqueta (direto)', browser: 'Impressora de etiqueta (navegador)', agent: 'Epson do caixa (bobina)' };
 
 type Job = { kind: 'labels'; items: LabelData[]; storeName: string } | { kind: 'calibration'; copies: number };
 
@@ -94,7 +109,7 @@ export function useLabelPrinter() {
   useEffect(() => {
     if (!job) return;
     const p = loadPrefs();
-    const pageH = 30 + (p.mode === 'continuous' ? p.gapMm : 0);
+    const pageH = Math.round((30 + (p.mode === 'continuous' ? p.gapMm : 0) + (p.pitchAdjustMm || 0)) * 10) / 10;
     const style = document.createElement('style');
     style.id = 'label-page-style';
     style.textContent = `@page { size: 50mm ${pageH}mm; margin: 0; }
@@ -127,7 +142,7 @@ export function useLabelPrinter() {
                 <div className="lbl-page" key={i}><div className="lbl-sheet"><LabelFace data={d} storeName={job.storeName} /></div></div>
               ))
             : Array.from({ length: job.copies }, (_, i) => (
-                <div className="lbl-page" key={i}><div className="lbl-sheet"><CalibrationFace /></div></div>
+                <div className="lbl-page" key={i}><div className="lbl-sheet"><CalibrationFace n={i + 1} total={job.copies} /></div></div>
               ))}
         </div>,
         document.body,

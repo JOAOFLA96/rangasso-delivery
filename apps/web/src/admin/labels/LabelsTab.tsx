@@ -4,8 +4,8 @@ import { api, formatDateTime, storage } from '../../lib/api';
 import { canManage, useSession } from '../session';
 import { Confirm, Modal, Toggle, errorText, useToast } from '../ui';
 import {
-  DEFAULT_PREFS, LabelFace, STORAGE_LABELS, TYPE_LABELS, formatShelfLife, labelDate, loadPrefs, savePrefs, toLocalInput, useLabelPrinter,
-  type LabelData, type LabelType, type PrintPrefs, type Storage,
+  DEFAULT_PREFS, LabelFace, STORAGE_LABELS, TARGET_LABELS, TYPE_LABELS, loadTarget, saveTarget, formatShelfLife, labelDate, loadPrefs, savePrefs, toLocalInput, useLabelPrinter,
+  type LabelData, type LabelType, type PrintPrefs, type PrintTarget, type Storage,
 } from './labelPrint';
 
 interface LabelProduct {
@@ -77,6 +77,8 @@ function PrintForm({ catalog, onPrinted, printer }: { catalog: CatalogData; onPr
   const [copies, setCopies] = useState(1);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState('');
+  const [target, setTargetState] = useState<PrintTarget>(loadTarget);
+  const setTarget = (t: PrintTarget) => { setTargetState(t); saveTarget(t); };
 
   const product = active.find((p) => p.id === productId) ?? null;
   const productHours = product ? hoursOf(product, storageSel) : null;
@@ -119,12 +121,16 @@ function PrintForm({ catalog, onPrinted, printer }: { catalog: CatalogData; onPr
         body: {
           productId: product?.id ?? null, productName: product ? '' : freeName.trim(), labelType, storage: storageSel,
           handledAt: handledIso, manualExpiresAt: useManual ? expiresIso : null, responsible: responsible.trim(),
-          quantityText: quantityText.trim(), extra: extra.trim(), copies,
+          quantityText: quantityText.trim(), extra: extra.trim(), copies, target,
         },
       });
       storage.set('rg_label_responsible', responsible.trim());
-      printer.printLabels({ ...r.print, notes: product?.notes }, copies, catalog.store.name);
-      toast(`Lote ${r.print.lot} registrado. Imprimindo ${copies} etiqueta(s)…`);
+      if (target === 'browser') {
+        printer.printLabels({ ...r.print, notes: product?.notes }, copies, catalog.store.name);
+        toast(`Lote ${r.print.lot} registrado. Imprimindo ${copies} etiqueta(s)…`);
+      } else {
+        toast(`Lote ${r.print.lot} enviado para ${target === 'tspl' ? 'a impressora de etiquetas' : 'a Epson'} (${copies} etiqueta${copies > 1 ? 's' : ''}). Acompanhe em Configurações › Impressora.`);
+      }
       onPrinted();
     } catch (e) {
       toast(errorText(e), 'error');
@@ -201,6 +207,15 @@ function PrintForm({ catalog, onPrinted, printer }: { catalog: CatalogData; onPr
             <button type="button" onClick={() => setCopies((c) => Math.min(50, c + 1))} aria-label="Mais">+</button>
           </div>
         </div>
+        <div className="field"><span>Imprimir em</span>
+          <div className="chips wrap">
+            {(['tspl', 'browser', 'agent'] as PrintTarget[]).map((t) => (
+              <button type="button" key={t} className={`chip ${target === t ? 'active' : ''}`} onClick={() => setTarget(t)}>{TARGET_LABELS[t]}</button>
+            ))}
+          </div>
+          {target === 'tspl' && <p className="muted small">Vai direto para a impressora de etiquetas pelo agente, no tamanho certo e respeitando o espaço entre etiquetas. Configure em <NavLink to="/admin/etiquetas/ajustes">Ajustes de impressão</NavLink>.</p>}
+          {target === 'agent' && <p className="muted small">Sai na Epson pelo agente, uma etiqueta por corte (papel de 80 mm, não fica 50x30). Use bobina comum e prenda com fita, ou bobina adesiva contínua.</p>}
+        </div>
         <button className="btn btn-primary btn-lg btn-block" disabled={busy || printer.busy} onClick={submit}>
           {busy ? 'Registrando…' : `Imprimir ${copies} etiqueta${copies > 1 ? 's' : ''}`}
         </button>
@@ -235,6 +250,17 @@ function ExpiryList({ storeName, printer }: { storeName: string; printer: Printe
   }, [showAll, q, toast]);
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
   useEffect(() => { const t = setInterval(load, 60_000); return () => clearInterval(t); }, [load]);
+
+  async function reprint(p: LabelPrint) {
+    const t = loadTarget();
+    if (t === 'browser') return printer.printLabels(p, 1, storeName);
+    try {
+      await api(`/api/admin/labels/prints/${p.id}/agent`, { body: { copies: 1, mode: t === 'tspl' ? 'tspl' : 'escpos' } });
+      toast(`Lote ${p.lot} enviado para ${t === 'tspl' ? 'a impressora de etiquetas' : 'a Epson'}`);
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+  }
 
   function badge(p: LabelPrint) {
     if (p.status === 'used') return <span className="badge lbl-b-used">Usado</span>;
@@ -271,7 +297,7 @@ function ExpiryList({ storeName, printer }: { storeName: string; printer: Printe
               <td>{p.lot}<div className="muted small">{p.responsible}{p.copies > 1 ? ` · ${p.copies} etiq.` : ''}</div></td>
               <td>
                 <div className="a-row wrap lbl-actions">
-                  <button className="btn btn-secondary btn-sm" disabled={printer.busy} onClick={() => printer.printLabels(p, 1, storeName)}>Reimprimir</button>
+                  <button className="btn btn-secondary btn-sm" disabled={printer.busy} onClick={() => reprint(p)}>Reimprimir</button>
                   {p.status === 'active' && <>
                     <button className="btn btn-secondary btn-sm" onClick={() => setClosing({ p, status: 'used' })}>Usado</button>
                     <button className="btn btn-secondary btn-sm" onClick={() => setClosing({ p, status: 'discarded' })}>Descartar</button>
@@ -406,6 +432,9 @@ function PrintAdjust({ printer }: { printer: Printer }) {
   return (
     <div>
       <h2>Ajustes de impressão</h2>
+      <DirectPrinterSettings />
+      <h3 className="lbl-h3">Impressão pelo navegador</h3>
+      <p className="alert alert-info">Estes ajustes valem só para a opção <strong>Impressora de etiqueta (navegador)</strong>. Na Epson do caixa, a etiqueta sai pelo agente com o layout da bobina e corte automático. As opções pelo agente precisam do agente 1.6.0 ou mais novo, que se atualiza sozinho.</p>
       <p className="muted small">Ficam salvos neste computador/navegador. Etiqueta: 50 x 30 mm com {p.gapMm} mm de espaço entre uma e outra.</p>
       <div className="field"><span>Tipo de papel</span>
         <div className="chips wrap">
@@ -423,22 +452,129 @@ function PrintAdjust({ printer }: { printer: Printer }) {
         <label className="field"><span>Margem interna (mm)</span><input type="number" step="0.5" min={0} max={5} value={p.marginMm} onChange={num('marginMm', 0, 5)} /></label>
         <label className="field"><span>Deslocar para a direita (mm, negativo = esquerda)</span><input type="number" step="0.5" min={-5} max={5} value={p.offsetXmm} onChange={num('offsetXmm', -5, 5)} /></label>
         <label className="field"><span>Deslocar para baixo (mm, negativo = cima)</span><input type="number" step="0.5" min={-5} max={5} value={p.offsetYmm} onChange={num('offsetYmm', -5, 5)} /></label>
+        <label className="field"><span>Correção do avanço por etiqueta (mm)</span><input type="number" step="0.1" min={-6} max={6} value={p.pitchAdjustMm} onChange={num('pitchAdjustMm', -6, 6)} /></label>
+        <div className="field"><span>Altura de cada página enviada</span><output className="lbl-computed">{(30 + (p.mode === 'continuous' ? p.gapMm : 0) + p.pitchAdjustMm).toFixed(1).replace('.', ',')} mm</output></div>
       </div>
+      <section className="card lbl-help">
+        <h3>A etiqueta vai descendo (ou subindo) a cada impressão?</h3>
+        <p className="small">Isso é o <strong>avanço</strong> errado: a impressora anda mais (ou menos) que o passo do rolo, que é 30 mm + {p.gapMm} mm = {30 + p.gapMm} mm. Imprima o teste com 5 etiquetas e veja quanto cada uma muda em relação à anterior:</p>
+        <ul className="small">
+          <li><strong>Desce uns {p.gapMm} mm por etiqueta:</strong> o espaço está sendo contado duas vezes. Use "Etiqueta destacável" aqui <em>e</em> no driver papel 50 x 30 com espaço {p.gapMm} mm, ou "Papel contínuo" aqui <em>e</em> no driver papel 50 x {30 + p.gapMm} sem espaço/sensor. Nunca os dois juntos.</li>
+          <li><strong>Sobe uns {p.gapMm} mm por etiqueta:</strong> ninguém está pulando o espaço. Ligue o sensor de espaço (gap/marca) no driver, ou mude aqui para "Papel contínuo".</li>
+          <li><strong>Desloca pouco (menos de 2 mm):</strong> ajuste a correção do avanço acima (desce = número negativo, sobe = positivo) e rode a calibração do sensor da impressora (no driver ou segurando o botão FEED ao ligar, conforme o modelo).</li>
+        </ul>
+      </section>
       <div className="a-row wrap">
         <button className="btn btn-primary" onClick={() => { savePrefs(p); toast('Ajustes salvos neste computador'); }}>Salvar ajustes</button>
-        <button className="btn btn-secondary" disabled={printer.busy} onClick={() => { savePrefs(p); printer.printCalibration(2); }}>Imprimir teste de alinhamento</button>
+        <button className="btn btn-secondary" disabled={printer.busy} onClick={() => { savePrefs(p); printer.printCalibration(5); }}>Imprimir teste (5 etiquetas)</button>
         <button className="btn btn-ghost" onClick={() => setP(DEFAULT_PREFS)}>Voltar ao padrão</button>
       </div>
       <section className="card lbl-help">
         <h3>Como deixar a impressão certa (Chrome ou Edge)</h3>
         <ol>
-          <li>Instale o driver da impressora de etiquetas no Windows e crie o papel <strong>50 x 30 mm</strong> (em alguns drivers: "Largura 50, Altura 30, Espaço 4").</li>
-          <li>Na janela de impressão, escolha a impressora de etiquetas, <strong>Margens: Nenhuma</strong>, <strong>Escala: Padrão (100%)</strong> e desmarque <strong>Cabeçalhos e rodapés</strong>. O navegador lembra essas opções.</li>
+          <li>Instale o driver da impressora de etiquetas no Windows. Em <strong>Preferências de impressão</strong> do driver, crie o papel <strong>50 x 30 mm</strong>, tipo de mídia <strong>"Etiqueta com espaço" (gap / labels with gaps)</strong>, espaço <strong>4 mm</strong>, e deixe esse papel como padrão.</li>
+          <li>Rode a <strong>calibração do sensor</strong> da impressora (opção "Calibrar" no driver ou utilitário do fabricante) com o rolo já colocado.</li>
+          <li>Na janela de impressão, escolha a impressora de etiquetas e, em Mais definições, <strong>Tamanho do papel: 50 x 30</strong>, <strong>Margens: Nenhuma</strong>, <strong>Escala: Padrão (100%)</strong> e desmarque <strong>Cabeçalhos e rodapés</strong>. O navegador lembra essas opções.</li>
           <li>Imprima o teste de alinhamento. Se a moldura sair cortada ou torta, ajuste os deslocamentos acima.</li>
           <li>Opcional: para imprimir sem a janela de confirmação, abra o painel por um atalho do Chrome com <code>--kiosk-printing</code> (usa a última impressora escolhida).</li>
         </ol>
-        <p className="muted small">A Epson TM-T20 do caixa é de cupom (rolo contínuo de 80 mm) e não serve para etiqueta 50 x 30 mm.</p>
+        <p className="muted small">A Epson TM-T20 do caixa é de cupom (bobina contínua de 80 mm), sem sensor de espaço: não imprime em rolo de etiqueta 50 x 30 mm. Nela, use a opção "Epson do caixa (bobina)" na tela Imprimir.</p>
       </section>
     </div>
   );
+}
+
+// ---------------------------------------------------------------- Impressora de etiquetas direto (TSPL pelo agente)
+interface DirectPrinter {
+  deviceId: string | null; printerName: string; widthMm: number; heightMm: number; gapMm: number;
+  speed: number; density: number; offsetXmm: number; offsetYmm: number; rotate: boolean;
+}
+interface DeviceRow { id: string; name: string; agent_version: string | null; last_seen_at: string | null }
+
+function DirectPrinterSettings() {
+  const { user } = useSession();
+  const toast = useToast();
+  const edit = canManage(user);
+  const [f, setF] = useState<DirectPrinter | null>(null);
+  const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api<{ printer: DirectPrinter; devices: DeviceRow[] }>('/api/admin/labels/printer')
+      .then((r) => { setF(r.printer); setDevices(r.devices); })
+      .catch((e) => toast(errorText(e), 'error'));
+  }, [toast]);
+  if (!f) return <p className="muted">Carregando…</p>;
+  const n = (k: keyof DirectPrinter) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const v = Number(e.target.value.replace(',', '.'));
+    if (Number.isFinite(v)) setF({ ...f, [k]: v });
+  };
+  const oldAgent = (d: DeviceRow) => !d.agent_version || compareVer(d.agent_version, '1.6.0') < 0;
+  async function save(test = false) {
+    setBusy(true);
+    try {
+      if (edit) {
+        const r = await api<{ printer: DirectPrinter }>('/api/admin/labels/printer', { method: 'PUT', body: f });
+        setF(r.printer);
+      }
+      if (test) {
+        await api('/api/admin/labels/printer/test', { body: { copies: 3 } });
+        toast('Teste enviado: 3 etiquetas com moldura');
+      } else toast('Impressora de etiquetas salva');
+    } catch (e) {
+      toast(errorText(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  const sel = devices.find((d) => d.id === f.deviceId);
+  return (
+    <section className="card">
+      <h3 className="lbl-h3 first">Impressora de etiquetas direto (recomendado)</h3>
+      <p className="muted small">O agente manda a etiqueta em <strong>TSPL</strong> direto para a impressora USB (OIA, Xprinter, Elgin, Argox e similares). A impressora usa o sensor de espaço a cada etiqueta, então nenhuma sai pela metade. Velocidade e densidade ficam aqui, não no driver.</p>
+      <fieldset className="plain" disabled={!edit}>
+        <div className="grid-2">
+          <label className="field"><span>PC onde ela está ligada (agente)</span>
+            <select value={f.deviceId ?? ''} onChange={(e) => setF({ ...f, deviceId: e.target.value || null })}>
+              <option value="">Qualquer agente</option>
+              {devices.map((d) => <option key={d.id} value={d.id}>{d.name}{d.agent_version ? ` (v${d.agent_version})` : ''}</option>)}
+            </select>
+          </label>
+          <label className="field"><span>Nome da impressora no Windows</span>
+            <input value={f.printerName} onChange={(e) => setF({ ...f, printerName: e.target.value })} maxLength={120} placeholder="Ex.: OIA-B381 (igual aparece em Impressoras e scanners)" />
+          </label>
+          <label className="field"><span>Largura x altura da etiqueta (mm)</span>
+            <div className="a-row">
+              <input type="number" step="1" min={20} max={104} value={f.widthMm} onChange={n('widthMm')} aria-label="Largura" />
+              <span>x</span>
+              <input type="number" step="1" min={15} max={200} value={f.heightMm} onChange={n('heightMm')} aria-label="Altura" />
+            </div>
+          </label>
+          <label className="field"><span>Espaço entre etiquetas (mm)</span><input type="number" step="0.5" min={0} max={20} value={f.gapMm} onChange={n('gapMm')} /></label>
+          <label className="field"><span>Velocidade (menor = mais nítida)</span>
+            <select value={f.speed} onChange={n('speed')}>{[1, 2, 3, 4, 5, 6].map((v) => <option key={v} value={v}>{v} pol/s{v === 2 ? ' (recomendado)' : ''}</option>)}</select>
+          </label>
+          <label className="field"><span>Densidade (maior = mais escura)</span>
+            <select value={f.density} onChange={n('density')}>{Array.from({ length: 16 }, (_, v) => <option key={v} value={v}>{v}{v === 10 ? ' (padrão)' : ''}</option>)}</select>
+          </label>
+          <label className="field"><span>Deslocar para a direita (mm)</span><input type="number" step="0.5" min={-10} max={10} value={f.offsetXmm} onChange={n('offsetXmm')} /></label>
+          <label className="field"><span>Deslocar para baixo (mm)</span><input type="number" step="0.5" min={-10} max={10} value={f.offsetYmm} onChange={n('offsetYmm')} /></label>
+        </div>
+        <Toggle checked={f.rotate} onChange={(v) => setF({ ...f, rotate: v })} label="Girar 180° (se sair de cabeça para baixo)" />
+      </fieldset>
+      {sel && oldAgent(sel) && <p className="alert alert-warning">O agente "{sel.name}" está na versão {sel.agent_version ?? 'desconhecida'}. Ele precisa da 1.6.0 ou mais nova (atualiza sozinho em alguns minutos depois do deploy).</p>}
+      {!edit && <p className="muted small">Somente gerente ou dono altera esta configuração. Você pode imprimir o teste.</p>}
+      <div className="a-row wrap">
+        {edit && <button className="btn btn-primary" disabled={busy} onClick={() => save(false)}>Salvar</button>}
+        <button className="btn btn-secondary" disabled={busy || !f.printerName} onClick={() => save(true)}>{edit ? 'Salvar e imprimir teste (3)' : 'Imprimir teste (3)'}</button>
+      </div>
+      <p className="muted small">Instale o driver da impressora no PC do agente e confira o nome em Configurações do Windows › Impressoras e scanners. Se a primeira etiqueta sair fora do lugar, rode a calibração da impressora (segurar FEED) com o rolo colocado.</p>
+    </section>
+  );
+}
+
+function compareVer(a: string, b: string) {
+  const pa = a.split(/[.-]/).map((x) => Number(x) || 0);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== pb[i]) return (pa[i] ?? 0) - pb[i];
+  return 0;
 }

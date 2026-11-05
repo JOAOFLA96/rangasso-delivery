@@ -226,3 +226,114 @@ describe('agente de impressão', () => {
     expect(Date.now() - t0).toBeLessThan(8000);
   }, 15_000);
 });
+
+describe('etiquetas de validade pela Epson (agente)', () => {
+  const printLabel = (extra: object = {}) => app.inject({
+    method: 'POST', url: '/api/admin/labels/prints', headers: admin,
+    payload: { productName: 'Molho da casa', storage: 'chilled', responsible: 'Carlos', handledAt: new Date(Date.now() - 60_000).toISOString(),
+      manualExpiresAt: new Date(Date.now() + 48 * 3600_000).toISOString(), quantityText: '1 kg', copies: 3, target: 'agent', ...extra },
+  });
+  const setVersion = (v: string | null) => pool.query('UPDATE print_devices SET agent_version = $2 WHERE id = $1', [deviceId, v]);
+
+  it('vira trabalho de impressão com os dados da etiqueta e só vai para agente 1.6.0 ou mais novo', async () => {
+    const r = await printLabel();
+    expect(r.statusCode, r.body).toBe(200);
+    const { jobId, print } = r.json();
+    expect(jobId).toBeTruthy();
+
+    await setVersion('1.5.0');
+    expect((await claim()).json().jobs).toEqual([]);
+    await setVersion(null);
+    expect((await claim()).json().jobs).toEqual([]);
+    await setVersion('1.6.0');
+    const jobs = (await claim()).json().jobs;
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ id: jobId, kind: 'label', copies: 3 });
+    expect(jobs[0].payload.label).toMatchObject({ productName: 'Molho da casa', lot: print.lot, responsible: 'Carlos', quantityText: '1 kg', storage: 'chilled' });
+    expect(jobs[0].payload.store.timezone).toBe('America/Sao_Paulo');
+    expect((await report(jobId, 'printed')).statusCode).toBe(200);
+
+    const queue = (await app.inject({ method: 'GET', url: '/api/admin/printer/status', headers: admin })).json().queue;
+    expect(queue[0]).toMatchObject({ kind: 'label', status: 'printed', label_lot: print.lot, label_product: 'Molho da casa' });
+  });
+
+  it('agente antigo continua recebendo as comandas; navegador não cria trabalho; reimpressão mantém o lote', async () => {
+    await setVersion('1.5.0');
+    await printLabel();
+    await newOrder();
+    const jobs = (await claim()).json().jobs;
+    expect(jobs.map((j: any) => j.kind)).toEqual(['original']);
+
+    const browser = (await printLabel({ target: 'browser' })).json();
+    expect(browser.jobId).toBeNull();
+    const re = await app.inject({ method: 'POST', url: `/api/admin/labels/prints/${browser.print.id}/agent`, headers: admin, payload: { copies: 2 } });
+    expect(re.statusCode, re.body).toBe(200);
+    await setVersion('1.6.1');
+    const labelJobs = (await claim()).json().jobs.filter((j: any) => j.id === re.json().jobId);
+    expect(labelJobs[0]).toMatchObject({ kind: 'label', copies: 2 });
+    expect(labelJobs[0].payload.label.lot).toBe(browser.print.lot);
+  });
+});
+
+describe('etiquetas em TSPL na impressora de etiquetas (USB no PC de um agente)', () => {
+  const setVersion = (id: string, v: string) => pool.query('UPDATE print_devices SET agent_version = $2 WHERE id = $1', [id, v]);
+  const printerBody = (over: object = {}) => ({
+    deviceId: deviceId, printerName: 'OIA-B381', widthMm: 50, heightMm: 30, gapMm: 4, speed: 2, density: 12, offsetXmm: 0, offsetYmm: 0.5, rotate: false, ...over,
+  });
+
+  it('sem configurar a impressora, avisa onde configurar', async () => {
+    const r = await app.inject({ method: 'POST', url: '/api/admin/labels/printer/test', headers: admin, payload: {} });
+    expect(r.json().error.code).toBe('label_printer_missing');
+  });
+
+  it('atendente não muda a configuração; gerente/dono salva e o trabalho vai só para o agente escolhido', async () => {
+    const staff = await loginAs(app, 'atendente@t.local');
+    expect((await app.inject({ method: 'PUT', url: '/api/admin/labels/printer', headers: staff, payload: printerBody() })).statusCode).toBe(403);
+    const saved = await app.inject({ method: 'PUT', url: '/api/admin/labels/printer', headers: admin, payload: printerBody() });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().printer).toMatchObject({ deviceId, printerName: 'OIA-B381', speed: 2, density: 12, gapMm: 4, offsetYmm: 0.5 });
+
+    // Segundo agente (outro PC): não pode pegar a etiqueta TSPL destinada ao primeiro.
+    const d2 = (await app.inject({ method: 'POST', url: '/api/admin/printer/devices', headers: admin, payload: { name: 'PC do escritório' } })).json();
+    const agent2 = { authorization: `Bearer ${d2.token}` };
+    await setVersion(deviceId, '1.6.0');
+    await setVersion(d2.id, '1.6.0');
+
+    const r = await app.inject({
+      method: 'POST', url: '/api/admin/labels/prints', headers: staff,
+      payload: { productName: 'Coxinha', storage: 'chilled', responsible: 'Ana', handledAt: new Date(Date.now() - 60_000).toISOString(),
+        manualExpiresAt: new Date(Date.now() + 3600_000).toISOString(), copies: 4, target: 'tspl' },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await claim(agent2)).json().jobs).toEqual([]);
+    const jobs = (await claim()).json().jobs;
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ kind: 'label', copies: 4 });
+    expect(jobs[0].payload.tspl).toEqual({ printerName: 'OIA-B381', widthMm: 50, heightMm: 30, gapMm: 4, speed: 2, density: 12, offsetXmm: 0, offsetYmm: 0.5, rotate: false });
+    expect(jobs[0].payload.label.lot).toBe(r.json().print.lot);
+
+    // Teste de calibração também vai para o mesmo agente, sem dados de etiqueta.
+    const t = (await app.inject({ method: 'POST', url: '/api/admin/labels/printer/test', headers: staff, payload: { copies: 3 } })).json();
+    expect((await claim(agent2)).json().jobs).toEqual([]);
+    const tj = (await claim()).json().jobs[0];
+    expect(tj).toMatchObject({ id: t.jobId, copies: 3 });
+    expect(tj.payload.calibration).toBe(true);
+
+    // Reimpressão pela impressora de etiquetas mantém o lote.
+    const re = await app.inject({ method: 'POST', url: `/api/admin/labels/prints/${r.json().print.id}/agent`, headers: staff, payload: { mode: 'tspl' } });
+    const rj = (await claim()).json().jobs.find((j: any) => j.id === re.json().jobId);
+    expect(rj.payload.tspl.printerName).toBe('OIA-B381');
+    expect(rj.payload.label.lot).toBe(r.json().print.lot);
+
+    // Comandas continuam indo para qualquer agente.
+    await newOrder();
+    expect((await claim(agent2)).json().jobs.map((j: any) => j.kind)).toEqual(['original']);
+  });
+
+  it('sem PC escolhido, qualquer agente 1.6.0+ pode imprimir', async () => {
+    await app.inject({ method: 'PUT', url: '/api/admin/labels/printer', headers: admin, payload: printerBody({ deviceId: null }) });
+    await setVersion(deviceId, '1.6.0');
+    await app.inject({ method: 'POST', url: '/api/admin/labels/printer/test', headers: admin, payload: {} });
+    expect((await claim()).json().jobs).toHaveLength(1);
+  });
+});

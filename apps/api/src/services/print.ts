@@ -97,6 +97,47 @@ export async function createPrintJob(
   return job as { id: string; kind: string; reprint_number: number };
 }
 
+// Agentes anteriores a esta versão não sabem desenhar etiqueta: não recebem trabalhos de etiqueta.
+export const LABEL_MIN_AGENT_VERSION = [1, 6, 0];
+
+// Etiqueta de validade (aba Etiquetas) enviada à impressora do agente. Uma etiqueta por corte, `copies` cópias.
+export interface LabelPrinterSettings {
+  deviceId: string | null; printerName: string; widthMm: number; heightMm: number; gapMm: number;
+  speed: number; density: number; offsetXmm: number; offsetYmm: number; rotate: boolean;
+}
+
+export async function loadLabelPrinter(db: Db, storeId: string): Promise<LabelPrinterSettings> {
+  const s = (await db.query('SELECT * FROM store_settings WHERE store_id = $1', [storeId])).rows[0];
+  return {
+    deviceId: s.label_device_id, printerName: s.label_printer_name, widthMm: Number(s.label_width_mm), heightMm: Number(s.label_height_mm),
+    gapMm: Number(s.label_gap_mm), speed: s.label_speed, density: s.label_density, offsetXmm: Number(s.label_offset_x_mm),
+    offsetYmm: Number(s.label_offset_y_mm), rotate: s.label_rotate,
+  };
+}
+
+// Etiqueta de validade (aba Etiquetas) enviada pelo agente.
+// mode 'escpos': Epson do caixa, na bobina com corte. mode 'tspl': impressora de etiquetas USB do PC indicado no painel.
+export async function createLabelPrintJob(
+  db: Db, storeId: string, label: Record<string, unknown> | null, copies: number, requestedBy: string, mode: 'escpos' | 'tspl' = 'escpos',
+) {
+  const s = (await db.query('SELECT paper_columns, display_name, timezone FROM store_settings WHERE store_id = $1', [storeId])).rows[0];
+  let payload: Record<string, unknown> = { store: { name: s.display_name, timezone: s.timezone }, columns: s.paper_columns, label };
+  let target: string | null = null;
+  if (mode === 'tspl') {
+    const lp = await loadLabelPrinter(db, storeId);
+    if (!lp.printerName) throw badRequest('label_printer_missing', 'Configure a impressora de etiquetas em Etiquetas › Ajustes (nome no Windows).');
+    const { deviceId, ...tspl } = lp;
+    payload = { ...payload, tspl, ...(label ? {} : { calibration: true }) };
+    target = deviceId;
+  }
+  const job = (await db.query(
+    `INSERT INTO print_jobs (store_id, kind, copies, payload, requested_by, target_device_id) VALUES ($1,'label',$2,$3,$4,$5) RETURNING id`,
+    [storeId, copies, JSON.stringify(payload), requestedBy, target],
+  )).rows[0];
+  await db.query(`INSERT INTO print_job_events (job_id, store_id, event, detail) VALUES ($1,$2,'created',$3)`, [job.id, storeId, mode === 'tspl' ? 'label tspl' : 'label']);
+  return job as { id: string };
+}
+
 // O status de impressão do pedido acompanha o trabalho mais recente (original ou reimpressão).
 export async function syncOrderPrintStatus(db: Db, orderId: string) {
   await db.query(
@@ -139,10 +180,14 @@ export async function claimJobs(storeId: string, deviceId: string, limit = 5) {
           AND j.id IN (
           SELECT id FROM print_jobs
            WHERE store_id = $1 AND status IN ('pending','failed') AND attempts < max_attempts AND next_attempt_at <= now()
+             AND (target_device_id IS NULL OR target_device_id = $2)
+             AND (kind <> 'label' OR EXISTS (
+               SELECT 1 FROM print_devices d WHERE d.id = $2 AND d.agent_version ~ '^[0-9]+[.][0-9]+[.][0-9]+'
+                  AND (string_to_array(split_part(d.agent_version, '-', 1), '.'))::int[] >= $5::int[]))
            ORDER BY created_at
            LIMIT $3 FOR UPDATE SKIP LOCKED)
         RETURNING j.id, j.order_id, j.kind, j.reprint_number, j.copies, j.payload, j.attempts, j.created_at, j.claimed_at`,
-      [storeId, deviceId, limit, CLAIM_LEASE_SECONDS],
+      [storeId, deviceId, limit, CLAIM_LEASE_SECONDS, LABEL_MIN_AGENT_VERSION],
     );
     for (const j of r.rows) {
       await client.query(`INSERT INTO print_job_events (job_id, store_id, device_id, event, detail) VALUES ($1,$2,$3,'claimed',$4)`, [j.id, storeId, deviceId, `tentativa ${j.attempts}`]);
