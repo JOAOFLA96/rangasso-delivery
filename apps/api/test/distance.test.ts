@@ -76,7 +76,7 @@ describe('taxa por km', () => {
   });
 
   it('bairro fora da lista com endereço achado é cadastrado com o valor da faixa; bairro desativado continua recusado', async () => {
-    await pool.query('UPDATE store_settings SET accept_unlisted_neighborhoods = true');
+    await pool.query('UPDATE store_settings SET accept_unlisted_neighborhoods = false'); // na taxa por km, salva mesmo assim
     const res = await post(orderBody(f, { address: addr('Rua Perto', { neighborhoodId: undefined, neighborhoodName: 'Jardim Qualquer' }) }));
     const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [res.json().token])).rows[0];
     expect(o).toMatchObject({ delivery_fee_cents: 500, neighborhood_name: 'Jardim Qualquer' });
@@ -107,13 +107,17 @@ describe('taxa por km', () => {
     expect(asked[0]).toBe('Rua Do Google, 787, Centro, Indaiatuba - SP, 13336-030, Brasil');
     await q('Rua Do Google');
     expect(asked).toHaveLength(1); // guardado
-    // Google só acha a cidade (vago demais) ou não acha: pede para conferir o CEP, sem cair em outro mapa nem na taxa do bairro.
-    let r = (await q('Cidade Inteira Rua Perto')).json();
+    // Google só acha a cidade (vago demais): vale a taxa salva do bairro do CEP (Centro, R$ 6,00), sem cair em outro mapa.
+    expect((await q('Cidade Inteira Rua Perto')).json()).toMatchObject({ deliveryFeeCents: 600, deliveryDistanceKm: null });
+    // Google fora do ar (ou sem cota) e bairro ainda não salvo: pede para conferir o CEP.
+    setGoogle(async () => { throw new Error('respondeu 403 PERMISSION_DENIED'); });
+    let r = (await post(orderBody(f, { address: addr('Rua Perto', { neighborhoodId: undefined, neighborhoodName: 'Jardim Novo' }) }))).json();
     expect(r.error).toMatchObject({ code: 'address_not_found', details: { field: 'address.cep' } });
     expect(r.error.message).toMatch(/Confira o CEP e o número/);
-    setGoogle(async () => { throw new Error('respondeu 403 PERMISSION_DENIED'); });
-    r = (await post(orderBody(f, { address: addr('Rua Perto') }))).json();
-    expect(r.error.code).toBe('address_not_found');
+    // Bairro salvo: o pedido sai com a taxa dele.
+    r = (await post(orderBody(f, { address: addr('Rua Perto', { neighborhoodId: undefined, neighborhoodName: 'centro' }) }))).json();
+    const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [r.token])).rows[0];
+    expect(o).toMatchObject({ delivery_fee_cents: 600, delivery_fee_source: 'neighborhood', neighborhood_id: f.hoodAId });
   });
 
   it('valor por km: km × valor, taxa mínima e raio máximo; cliente sem escolher bairro', async () => {

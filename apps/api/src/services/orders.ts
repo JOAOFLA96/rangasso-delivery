@@ -211,8 +211,8 @@ export function areaLimitKm(r: FeeRule) {
 }
 
 // Taxa de entrega. No modo "por km" (loja localizada e regra de cobrança cadastrada), mede a distância de carro até o cliente.
-// Com a chave do Google Maps, só o Google vale: se ele não achar o endereço, o cliente confere o CEP e o número. Sem a chave,
-// usa os mapas grátis (e o OpenRouteService ou a linha reta); se não achar, vale a regra do bairro.
+// Com a chave do Google Maps, o Google mede; se ele falhar, vale a taxa salva do bairro do CEP (bairros são salvos sozinhos a cada
+// pedido); sem bairro salvo, o cliente confere o CEP e o número. Sem a chave, usa os mapas grátis; se não achar, vale o bairro.
 async function resolveDelivery(db: Db, storeId: string, settings: any, ref: HoodRef, addr: GeoAddress | null, create: boolean) {
   if (settings.delivery_fee_mode === 'distance' && settings.store_lat != null && settings.store_lng != null && addr) {
     const rule = await feeRule(db, storeId, settings);
@@ -227,8 +227,14 @@ async function resolveDelivery(db: Db, storeId: string, settings: any, ref: Hood
     if (ruleReady(rule)) {
       if (googleEnabled()) {
         const g = await googleDistance(db, store, addressLine(full));
-        if (!g) throw badRequest('address_not_found', 'Não encontramos esse endereço no mapa. Confira o CEP e o número da casa.', { field: 'address.cep' });
-        dist = { km: g.km, by: 'route' };
+        if (g) dist = { km: g.km, by: 'route' };
+        else {
+          // Reserva (Google fora do ar, sem cota ou sem achar): a taxa já salva do bairro que veio do CEP.
+          if (hood && hood.active && !hood.fee_pending) {
+            return { hood, fee: hood.fee_cents as number, feePending: false, distanceKm: null as number | null, distanceBy: null as 'route' | 'straight' | null, source: 'neighborhood' as const };
+          }
+          throw badRequest('address_not_found', 'Não encontramos esse endereço no mapa. Confira o CEP e o número da casa.', { field: 'address.cep' });
+        }
       } else {
         const point = await geocodeAddress(db, full);
         if (point) dist = await deliveryDistance(db, store, point);
@@ -243,8 +249,8 @@ async function resolveDelivery(db: Db, storeId: string, settings: any, ref: Hood
       }
       if (hood && !hood.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
       // Cadastro automático: bairro novo entra (ou bairro "a combinar" é atualizado) com a taxa desta distância.
-      // Bairro com taxa definida pela loja não é alterado. Serve de referência no painel e de reserva sem mapa.
-      if (create && name && (hood ? hood.fee_pending : settings.accept_unlisted_neighborhoods)) {
+      // Bairro com taxa já definida não é alterado. É a reserva quando o Google falhar ou a cota acabar.
+      if (create && name && (!hood || hood.fee_pending)) {
         const city = hood?.city ?? cleanText(ref.city ?? addr.city ?? '', 80);
         const r = await db.query(
           `INSERT INTO neighborhoods (store_id, name, city, fee_cents, fee_pending, sort_order)
