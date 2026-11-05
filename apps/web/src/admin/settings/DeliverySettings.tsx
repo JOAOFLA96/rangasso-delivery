@@ -149,8 +149,8 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
         <>
           <p className="muted small">
             O cliente informa só o CEP e o número. O Google Maps acha o endereço e mede a distância de carro pelas ruas (a rota mais curta)
-            até a loja. Cada bairro novo é salvo sozinho com a taxa do primeiro pedido: se o Google falhar ou a cota acabar, vale a taxa
-            salva do bairro do CEP; se o bairro ainda não estiver salvo, o cliente é avisado para conferir o CEP e o número.
+            até a loja; se não achar, o cliente é avisado para conferir o CEP e o número. Cada bairro novo é salvo sozinho, abaixo, com a
+            taxa do primeiro pedido (guardado para uso futuro).
           </p>
           {data.settings.googleConfigured
             ? <p className="hint">✓ Google Maps ativado: endereço e distância pelas ruas.</p>
