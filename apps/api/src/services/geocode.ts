@@ -11,7 +11,7 @@ export type Provider = 'nominatim' | 'photon' | 'cep';
 // q traz o serviço em q.provider; o resto são os parâmetros da busca.
 export type GeocodeFn = (q: Record<string, string>) => Promise<{ lat: number; lng: number; label: string } | null>;
 // Registro de cada tentativa, mostrado no teste de endereço do painel.
-export interface GeoTry { provider: Provider; query: string; result: 'achou' | 'não achou' | 'erro'; detail?: string; cached?: boolean }
+export interface GeoTry { provider: Provider | 'google'; query: string; result: 'achou' | 'não achou' | 'erro'; detail?: string; cached?: boolean }
 
 const NEGATIVE_TTL_MS = 6 * 3600_000;
 const MAX_WAITING = 8; // fila cheia (pico ou abuso): não espera, o pedido usa a taxa do bairro

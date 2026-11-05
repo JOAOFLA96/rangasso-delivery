@@ -10,6 +10,8 @@ import { imageUrl } from '../../services/menu.js';
 import { getOpenState, getSettings } from '../../services/store.js';
 import { distanceKm, geocodeAddress, geocodeText, type GeoTry } from '../../services/geocode.js';
 import { deliveryDistance, routingEnabled } from '../../services/routing.js';
+import { feeForKm, feeRule, ruleReady } from '../../services/orders.js';
+import { addressLine, googleDistance, googleEnabled, googleLocate } from '../../services/google.js';
 import { distanceTiers } from '../../services/orders.js';
 
 const uuid = z.string().uuid();
@@ -47,10 +49,16 @@ const distanceBody = z.object({
   storeLat: z.number().min(-90).max(90).nullable(),
   storeLng: z.number().min(-180).max(180).nullable(),
   tiers: z.array(z.object({ maxKm: z.number().positive().max(200), feeCents: cents })).max(30),
+  // Cobrança: por faixas ou por valor do km (com taxa mínima e raio máximo opcionais).
+  pricing: z.enum(['tiers', 'per_km']).optional().default('tiers'),
+  pricePerKmCents: cents.optional().default(0),
+  minFeeCents: cents.optional().default(0),
+  maxKm: z.number().positive().max(200).nullable().optional().default(null),
   // Endereço da loja (o mesmo de "Dados da loja"); opcional para não exigir de quem só troca as faixas.
   address: z.string().trim().max(200).optional(),
 }).refine((b) => b.mode !== 'distance' || (b.storeLat != null && b.storeLng != null), { path: ['storeLat'], message: 'Localize a loja antes de ligar a taxa por km.' })
-  .refine((b) => b.mode !== 'distance' || b.tiers.length > 0, { path: ['tiers'], message: 'Cadastre pelo menos uma faixa de km.' })
+  .refine((b) => b.mode !== 'distance' || b.pricing !== 'tiers' || b.tiers.length > 0, { path: ['tiers'], message: 'Cadastre pelo menos uma faixa de km.' })
+  .refine((b) => b.mode !== 'distance' || b.pricing !== 'per_km' || b.pricePerKmCents > 0, { path: ['pricePerKmCents'], message: 'Informe o valor do km.' })
   .refine((b) => new Set(b.tiers.map((t) => Math.round(t.maxKm * 100))).size === b.tiers.length, { path: ['tiers'], message: 'Há duas faixas com o mesmo km.' });
 
 const printerBody = z.object({
@@ -86,7 +94,7 @@ export function settingsDto(s: any) {
     pixKey: s.pix_key, pixInstructions: s.pix_instructions, openMode: s.open_mode, printerModel: s.printer_model,
     printerConnection: s.printer_connection, printerHost: s.printer_host, printerPort: s.printer_port,
     printerWindowsName: s.printer_windows_name, autoPrint: s.auto_print, printCopies: s.print_copies, paperColumns: s.paper_columns,
-    receiptFooter: s.receipt_footer, acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods, acceptsPickup: s.accepts_pickup, routingConfigured: routingEnabled(), updatedAt: s.updated_at,
+    receiptFooter: s.receipt_footer, acceptUnlistedNeighborhoods: s.accept_unlisted_neighborhoods, acceptsPickup: s.accepts_pickup, routingConfigured: routingEnabled(), googleConfigured: googleEnabled(), updatedAt: s.updated_at,
   };
 }
 
@@ -113,7 +121,11 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
       hours: hours.rows,
       closures: closures.rows,
       neighborhoods: hoods.rows.map((n) => ({ id: n.id, name: n.name, city: n.city, feeCents: n.fee_cents, minOrderCents: n.min_order_cents, active: n.active, feePending: n.fee_pending })),
-      distance: { mode: s.delivery_fee_mode, storeLat: s.store_lat, storeLng: s.store_lng, tiers: await distanceTiers(pool, storeId) },
+      distance: {
+        mode: s.delivery_fee_mode, storeLat: s.store_lat, storeLng: s.store_lng, tiers: await distanceTiers(pool, storeId),
+        pricing: s.distance_pricing, pricePerKmCents: s.price_per_km_cents, minFeeCents: s.distance_min_fee_cents,
+        maxKm: s.distance_max_km == null ? null : Number(s.distance_max_km),
+      },
     };
   });
 
@@ -158,7 +170,11 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     await tx(async (db) => {
       const before = (await db.query('SELECT delivery_fee_mode, store_lat, store_lng FROM store_settings WHERE store_id = $1 FOR UPDATE', [storeId])).rows[0];
       const beforeTiers = await distanceTiers(db, storeId);
-      await db.query('UPDATE store_settings SET delivery_fee_mode = $2, store_lat = $3, store_lng = $4, updated_at = now() WHERE store_id = $1', [storeId, b.mode, b.storeLat, b.storeLng]);
+      await db.query(
+        `UPDATE store_settings SET delivery_fee_mode = $2, store_lat = $3, store_lng = $4, distance_pricing = $5, price_per_km_cents = $6,
+           distance_min_fee_cents = $7, distance_max_km = $8, updated_at = now() WHERE store_id = $1`,
+        [storeId, b.mode, b.storeLat, b.storeLng, b.pricing, b.pricePerKmCents, b.minFeeCents, b.maxKm],
+      );
       if (b.address) await db.query('UPDATE store_settings SET address = $2 WHERE store_id = $1', [storeId, b.address]);
       await db.query('DELETE FROM delivery_distance_tiers WHERE store_id = $1', [storeId]);
       for (const t of b.tiers) {
@@ -172,7 +188,12 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
   // Acha a localização da loja pelo endereço (serviço de mapas). Não grava: o painel mostra e o gerente confirma.
   app.post('/settings/locate-store', canEdit, async (req) => {
     const b = parse(z.object({ address: z.string().trim().min(5).max(200) }), req.body);
-    const p = await geocodeText(pool, b.address);
+    let p: { lat: number; lng: number; precision: string; label: string } | null = null;
+    try {
+      const g = await googleLocate(b.address);
+      if (g) p = { lat: g.lat, lng: g.lng, precision: g.precision, label: `${b.address} (Google)` };
+    } catch { /* Google fora do ar: tenta os mapas grátis */ }
+    p ??= await geocodeText(pool, b.address);
     if (!p) throw badRequest('not_found', 'Não achei esse endereço no mapa. Confira o texto ou informe a latitude e longitude manualmente.');
     return { lat: p.lat, lng: p.lng, precision: p.precision, label: p.label };
   });
@@ -186,15 +207,23 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     const storeId = (req as any).admin.storeId;
     const s = await getSettings(pool, storeId);
     const trace: GeoTry[] = [];
-    const p = await geocodeAddress(pool, b, trace);
     const tiers = await distanceTiers(pool, storeId);
-    const dist = p && s.store_lat != null && s.store_lng != null ? await deliveryDistance(pool, { lat: s.store_lat, lng: s.store_lng }, p) : null;
+    const located = s.store_lat != null && s.store_lng != null;
+    const store = { lat: s.store_lat, lng: s.store_lng };
+    // Mesma ordem do pedido: Google primeiro; sem ele, mapas grátis + OpenRouteService ou linha reta.
+    const line = addressLine(b);
+    const g = located ? await googleDistance(pool, store, line, trace) : null;
+    const p = g || googleEnabled() ? null : await geocodeAddress(pool, b, trace); // com o Google, só ele vale (igual ao pedido)
+    const dist = g ? { km: g.km, by: 'route' as const, error: undefined } : p && located ? await deliveryDistance(pool, store, p) : null;
     const km = dist?.km ?? null;
-    const straightKm = p && s.store_lat != null && s.store_lng != null ? Math.round(distanceKm({ lat: s.store_lat, lng: s.store_lng }, p) * 100) / 100 : null;
-    const tier = km == null ? null : tiers.find((t) => km <= t.maxKm) ?? null;
+    const at = g?.point ?? p;
+    const straightKm = at && located ? Math.round(distanceKm(store, at) * 100) / 100 : null;
+    const rule = await feeRule(pool, storeId, s);
+    const fee = km == null ? null : feeForKm(rule, km);
     return {
-      found: p ? { lat: p.lat, lng: p.lng, label: p.label, precision: p.precision, provider: p.provider } : null,
-      distanceKm: km, distanceBy: dist?.by ?? null, routeError: dist?.error ?? null, routingConfigured: routingEnabled(), straightKm, feeCents: tier?.feeCents ?? null, outOfArea: km != null && !tier, storeLocated: s.store_lat != null, trace,
+      found: g ? { lat: g.point?.lat ?? null, lng: g.point?.lng ?? null, label: line, precision: g.precision, provider: 'google' }
+        : p ? { lat: p.lat, lng: p.lng, label: p.label, precision: p.precision, provider: p.provider } : null,
+      googleConfigured: googleEnabled(), distanceKm: km, distanceBy: dist?.by ?? null, routeError: dist?.error ?? null, routingConfigured: routingEnabled(), straightKm, feeCents: fee, outOfArea: km != null && fee == null, storeLocated: s.store_lat != null, trace,
     };
   });
 
@@ -256,6 +285,37 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
   });
 
   // Bairros -----------------------------------------------------------------------
+  // Preenche a taxa dos bairros "a combinar" pela distância do centro do bairro até a loja (faixas de km). Não mexe em bairro
+  // que já tem taxa definida. Até 40 por vez para não estourar a cota dos mapas.
+  app.post('/neighborhoods/fill-fees', canEdit, async (req) => {
+    const storeId = req.admin!.storeId;
+    const s = await getSettings(pool, storeId);
+    const rule = await feeRule(pool, storeId, s);
+    if (s.store_lat == null || s.store_lng == null || !ruleReady(rule)) {
+      throw badRequest('distance_not_configured', 'Salve antes a localização da loja e o valor do km (ou as faixas).');
+    }
+    const store = { lat: s.store_lat, lng: s.store_lng };
+    const hoods = (await pool.query('SELECT * FROM neighborhoods WHERE store_id = $1 AND fee_pending AND active ORDER BY name LIMIT 40', [storeId])).rows;
+    const updated: { name: string; km: number; feeCents: number }[] = [];
+    const skipped: { name: string; reason: string }[] = [];
+    for (const n of hoods) {
+      const city = n.city || s.address.match(/,\s*([^,-]+?)\s*-\s*[A-Z]{2}\b/)?.[1]?.trim() || '';
+      const g = await googleDistance(pool, store, [n.name, city, 'Brasil'].filter(Boolean).join(', '));
+      let km = g?.km ?? null;
+      if (km == null && !googleEnabled()) {
+        const p = await geocodeText(pool, [n.name, city].filter(Boolean).join(', '));
+        if (p) km = (await deliveryDistance(pool, store, p)).km;
+      }
+      if (km == null) { skipped.push({ name: n.name, reason: 'não achei no mapa' }); continue; }
+      const fee = feeForKm(rule, km);
+      if (fee == null) { skipped.push({ name: n.name, reason: `${km.toFixed(1).replace('.', ',')} km: fora da área` }); continue; }
+      await pool.query('UPDATE neighborhoods SET fee_cents = $2, fee_pending = false WHERE id = $1 AND fee_pending', [n.id, fee]);
+      updated.push({ name: n.name, km, feeCents: fee });
+    }
+    await audit(pool, actor(req), 'neighborhood.fill_fees', 'store_settings', storeId, { updated: updated.length, skipped: skipped.length });
+    return { updated, skipped };
+  });
+
   app.post('/neighborhoods', canEdit, async (req) => {
     const b = parse(neighborhoodBody, req.body);
     return tx(async (db) => {

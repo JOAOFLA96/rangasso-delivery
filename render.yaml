@@ -31,3 +31,6 @@ services:
       # Chave grátis do OpenRouteService: taxa por km pela rota de carro (sem ela, linha reta).
       - key: ORS_API_KEY
         sync: false
+      # Chave do Google Maps (Routes API): endereço e distância pelas ruas, com prioridade sobre os serviços grátis.
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false

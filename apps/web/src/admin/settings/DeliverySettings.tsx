@@ -89,6 +89,10 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
   const [lng, setLng] = useState(d.storeLng == null ? '' : String(d.storeLng));
   const [found, setFound] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
+  const [pricing, setPricing] = useState<'tiers' | 'per_km'>(d.pricing ?? 'tiers');
+  const [perKm, setPerKm] = useState(d.pricePerKmCents ? centsToInput(d.pricePerKmCents) : '');
+  const [minFee, setMinFee] = useState(d.minFeeCents ? centsToInput(d.minFeeCents) : '');
+  const [maxKm, setMaxKm] = useState(d.maxKm != null ? kmText(d.maxKm) : '');
   const [tiers, setTiers] = useState(d.tiers.length ? d.tiers.map((t) => ({ km: kmText(t.maxKm), fee: centsToInput(t.feeCents) })) : [{ km: '2', fee: '' }, { km: '4', fee: '' }, { km: '6', fee: '' }]);
 
   async function locate() {
@@ -111,8 +115,14 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
     if (Number.isNaN(storeLat) || Number.isNaN(storeLng)) return toast('Latitude/longitude inválida. Ex.: -23.0896', 'error');
     const parsed = tiers.filter((t) => t.km.trim() || t.fee.trim()).map((t) => ({ maxKm: parseNum(t.km), feeCents: inputToCents(t.fee) }));
     if (parsed.some((t) => !(t.maxKm > 0) || t.feeCents == null || Number.isNaN(t.feeCents))) return toast('Confira as faixas: km maior que zero e taxa no formato 7,50.', 'error');
+    const pricePerKmCents = perKm.trim() ? inputToCents(perKm) : 0;
+    const minFeeCents = minFee.trim() ? inputToCents(minFee) : 0;
+    const maxKmN = maxKm.trim() ? parseNum(maxKm) : null;
+    if (pricing === 'per_km' && (pricePerKmCents == null || Number.isNaN(pricePerKmCents) || minFeeCents == null || Number.isNaN(minFeeCents) || (maxKmN != null && !(maxKmN > 0)))) {
+      return toast('Confira o valor do km (ex.: 2,00), a taxa mínima e o raio máximo.', 'error');
+    }
     try {
-      await api('/api/admin/settings/distance', { method: 'PUT', body: { mode, storeLat, storeLng, tiers: parsed, ...(address.trim() ? { address: address.trim() } : {}) } });
+      await api('/api/admin/settings/distance', { method: 'PUT', body: { mode, storeLat, storeLng, tiers: parsed, pricing, pricePerKmCents, minFeeCents, maxKm: maxKmN, ...(address.trim() ? { address: address.trim() } : {}) } });
       toast('Taxa por km salva');
       reload();
     } catch (e) {
@@ -138,12 +148,15 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
       {mode === 'distance' && (
         <>
           <p className="muted small">
-            O sistema acha o endereço do cliente no mapa e mede a distância de carro pelas ruas até a loja (OpenRouteService). Se o serviço de rotas
-            falhar, mede em linha reta, que costuma ser 20% a 40% menor. Se o endereço não for encontrado, vale a taxa do bairro.
+            O cliente informa só o CEP e o número. O Google Maps acha o endereço e mede a distância de carro pelas ruas (a rota mais curta)
+            até a loja; se não achar, o cliente é avisado para conferir o CEP e o número. Bairro novo é cadastrado sozinho com a taxa do
+            primeiro pedido. Sem a chave do Google, valem os mapas gratuitos.
           </p>
-          {data.settings.routingConfigured
-            ? <p className="hint">✓ Distância pelas ruas ativada.</p>
-            : <p className="alert alert-warning">Distância pelas ruas desligada: falta a chave grátis do OpenRouteService (variável ORS_API_KEY na hospedagem). Por enquanto a distância é em linha reta.</p>}
+          {data.settings.googleConfigured
+            ? <p className="hint">✓ Google Maps ativado: endereço e distância pelas ruas.</p>
+            : data.settings.routingConfigured
+              ? <p className="hint">✓ Distância pelas ruas ativada (OpenRouteService). Google Maps desligado: falta a variável GOOGLE_MAPS_API_KEY na hospedagem.</p>
+              : <p className="alert alert-warning">Distância pelas ruas desligada: falta a chave do Google Maps (GOOGLE_MAPS_API_KEY) ou do OpenRouteService (ORS_API_KEY) na hospedagem. Por enquanto a distância é em linha reta.</p>}
           <label className="field"><span>Endereço da loja</span>
             <input value={address} maxLength={200} disabled={!manage} onChange={(e) => setAddress(e.target.value)} placeholder="Rua, número - bairro, cidade - UF, CEP" />
           </label>
@@ -161,6 +174,31 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
               <span className="muted">(se estiver errado, copie a latitude e longitude certas do Google Maps: clique com o botão direito no local)</span>
             </p>
           )}
+          <h4>Como calcular a taxa</h4>
+          <div className="radio-list">
+            <label className={`radio-card ${pricing === 'per_km' ? 'checked' : ''}`}>
+              <input type="radio" name="pricing" checked={pricing === 'per_km'} disabled={!manage} onChange={() => setPricing('per_km')} />
+              <span>Valor por km (km pelas ruas × valor do km)</span>
+            </label>
+            <label className={`radio-card ${pricing === 'tiers' ? 'checked' : ''}`}>
+              <input type="radio" name="pricing" checked={pricing === 'tiers'} disabled={!manage} onChange={() => setPricing('tiers')} />
+              <span>Por faixas de km (tabela abaixo)</span>
+            </label>
+          </div>
+          {pricing === 'per_km' ? (
+            <>
+              <div className="grid-2">
+                <label className="field"><span>Valor do km (R$)</span><input id="d-perkm" inputMode="decimal" placeholder="2,00" value={perKm} disabled={!manage} onChange={(e) => setPerKm(e.target.value)} /></label>
+                <label className="field"><span>Taxa mínima (R$, opcional)</span><input id="d-minfee" inputMode="decimal" placeholder="0,00" value={minFee} disabled={!manage} onChange={(e) => setMinFee(e.target.value)} /></label>
+              </div>
+              <label className="field"><span>Entrega até (km, opcional)</span><input id="d-maxkm" inputMode="decimal" placeholder="sem limite" value={maxKm} disabled={!manage} onChange={(e) => setMaxKm(e.target.value)} /></label>
+              {perKm.trim() && (() => {
+                const c = inputToCents(perKm) ?? 0;
+                const m = inputToCents(minFee) ?? 0;
+                return <p className="muted small">Exemplo: 5 km × R$ {perKm} = {brl(Math.max(m, 5 * c))}{m ? ` (mínimo ${brl(m)})` : ''}.</p>;
+              })()}
+            </>
+          ) : <>
           <h4>Faixas de distância</h4>
           <table className="a-table">
             <thead><tr><th>Até (km)</th><th>Taxa (R$)</th><th /></tr></thead>
@@ -183,6 +221,7 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
               <li>Acima de {kmText(sorted[sorted.length - 1].n)} km: não entregamos</li>
             </ul>
           )}
+          </>}
           {manage && <AddressTest />}
         </>
       )}
@@ -197,7 +236,7 @@ interface AddressTestResult {
   feeCents: number | null; outOfArea: boolean; storeLocated: boolean;
   trace: { provider: string; query: string; result: string; detail?: string; cached?: boolean }[];
 }
-const PROVIDER_NAMES: Record<string, string> = { nominatim: 'OpenStreetMap', photon: 'Photon', cep: 'CEP' };
+const PROVIDER_NAMES: Record<string, string> = { google: 'Google Maps', nominatim: 'OpenStreetMap', photon: 'Photon', cep: 'CEP' };
 
 // Testa um endereço de cliente com a regra que o pedido usa (salve antes as faixas e o ponto da loja).
 function AddressTest() {
@@ -265,7 +304,24 @@ function AddressTest() {
 
 function Neighborhoods({ data, reload }: { data: SettingsData; reload: () => Promise<void> }) {
   const { user } = useSession();
+  const toast = useToast();
   const [edit, setEdit] = useState<Partial<SettingsData['neighborhoods'][number]> | null>(null);
+  const [filling, setFilling] = useState(false);
+  const [fillResult, setFillResult] = useState<{ updated: { name: string; km: number; feeCents: number }[]; skipped: { name: string; reason: string }[] } | null>(null);
+  const pending = data.neighborhoods.filter((n) => n.feePending && n.active).length;
+  async function fillFees() {
+    setFilling(true);
+    try {
+      const r = await api<NonNullable<typeof fillResult>>('/api/admin/neighborhoods/fill-fees', { method: 'POST', body: {} });
+      setFillResult(r);
+      toast(`${r.updated.length} bairro(s) com taxa preenchida pelo mapa`);
+      await reload();
+    } catch (e) {
+      toast(errorText(e), 'error');
+    } finally {
+      setFilling(false);
+    }
+  }
   return (
     <section className="card">
       <div className="a-section-head">
@@ -274,7 +330,18 @@ function Neighborhoods({ data, reload }: { data: SettingsData; reload: () => Pro
       </div>
       <p className="muted small">O CEP do cliente preenche o bairro sozinho. Bairro novo entra aqui marcado "taxa a definir": edite e coloque a taxa. Bairro desativado = região não atendida.</p>
       {data.neighborhoods.some((n) => n.feePending && n.active) && (
-        <p className="alert alert-warning">Há bairros novos sem taxa definida. Os pedidos deles saem com a taxa "a combinar" até você editar o bairro.</p>
+        <div className="alert alert-warning">
+          <p>Há {pending} bairro(s) sem taxa definida. Os pedidos deles saem com a taxa "a combinar" se o mapa não achar o endereço.</p>
+          {canManage(user) && data.distance.mode === 'distance' && (
+            <button className="btn btn-secondary btn-sm" onClick={fillFees} disabled={filling}>{filling ? 'Calculando…' : 'Preencher as taxas pelo mapa (faixas de km)'}</button>
+          )}
+        </div>
+      )}
+      {fillResult && (
+        <ul className="muted small">
+          {fillResult.updated.map((u) => <li key={u.name}>✓ {u.name}: {u.km.toFixed(1).replace('.', ',')} km → {brl(u.feeCents)}</li>)}
+          {fillResult.skipped.map((u) => <li key={u.name}>— {u.name}: {u.reason}</li>)}
+        </ul>
       )}
       {!data.neighborhoods.length && !data.settings.acceptUnlistedNeighborhoods && <p className="alert alert-warning">Nenhum bairro cadastrado: sem bairro, o cliente não consegue finalizar pedidos.</p>}
       <table className="a-table">

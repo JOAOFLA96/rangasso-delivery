@@ -25,6 +25,8 @@ const schema = z.object({
   GEOCODER_URL: z.string().url().default('https://nominatim.openstreetmap.org'),
   // Chave grátis do OpenRouteService (openrouteservice.org): taxa por km pela rota de carro. Sem ela, vale a linha reta.
   ORS_API_KEY: z.string().trim().optional().default(''),
+  // Chave do Google Maps (Routes API): distância de carro e endereço do cliente pelo Google. Tem prioridade sobre os serviços grátis.
+  GOOGLE_MAPS_API_KEY: z.string().trim().optional().default(''),
 });
 
 // Hospedagens que informam o endereço público sozinhas (Render, Railway): usa se PUBLIC_URL não foi definido.

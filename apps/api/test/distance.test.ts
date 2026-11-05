@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetDb, seed, makeApp, orderBody, loginAs, pool, type Fixture } from './helpers.js';
 import { distanceKm, geocodeText, setGeocoder } from '../src/services/geocode.js';
 import { setRouter } from '../src/services/routing.js';
+import { setGoogle } from '../src/services/google.js';
 
 let app: Awaited<ReturnType<typeof makeApp>>;
 let f: Fixture;
@@ -30,6 +31,7 @@ beforeEach(async () => {
 afterEach(() => {
   setGeocoder(null);
   setRouter(null);
+  setGoogle(null);
 });
 afterAll(async () => {
   await app.close();
@@ -73,12 +75,84 @@ describe('taxa por km', () => {
     expect(o).toMatchObject({ delivery_fee_cents: 600, delivery_fee_source: 'neighborhood' });
   });
 
-  it('bairro fora da lista com endereço achado não vira cadastro; bairro desativado continua recusado', async () => {
+  it('bairro fora da lista com endereço achado é cadastrado com o valor da faixa; bairro desativado continua recusado', async () => {
+    await pool.query('UPDATE store_settings SET accept_unlisted_neighborhoods = true');
     const res = await post(orderBody(f, { address: addr('Rua Perto', { neighborhoodId: undefined, neighborhoodName: 'Jardim Qualquer' }) }));
     const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [res.json().token])).rows[0];
-    expect(o).toMatchObject({ delivery_fee_cents: 500, neighborhood_name: 'Jardim Qualquer', neighborhood_id: null });
-    expect((await pool.query(`SELECT count(*)::int c FROM neighborhoods`)).rows[0].c).toBe(2);
+    expect(o).toMatchObject({ delivery_fee_cents: 500, neighborhood_name: 'Jardim Qualquer' });
+    const h = (await pool.query(`SELECT * FROM neighborhoods WHERE name = 'Jardim Qualquer'`)).rows[0];
+    expect(h).toMatchObject({ id: o.neighborhood_id, fee_cents: 500, fee_pending: false });
+    // Bairro "a combinar" ganha o valor; bairro com taxa definida pela loja não muda.
+    await pool.query(`UPDATE neighborhoods SET fee_pending = true, fee_cents = 0 WHERE name = 'Jardim Qualquer'`);
+    await post(orderBody(f, { address: addr('Rua Media', { neighborhoodId: undefined, neighborhoodName: 'Jardim Qualquer' }) }));
+    expect((await pool.query(`SELECT fee_cents, fee_pending FROM neighborhoods WHERE name = 'Jardim Qualquer'`)).rows[0]).toEqual({ fee_cents: 800, fee_pending: false });
+    await post(orderBody(f, { address: addr('Rua Media') }));
+    expect((await pool.query('SELECT fee_cents FROM neighborhoods WHERE id = $1', [f.hoodAId])).rows[0].fee_cents).toBe(600);
+    // A cotação não grava nada.
+    await app.inject({ method: 'POST', url: '/api/public/quote', payload: { items: orderBody(f).items, neighborhoodName: 'Jardim Cotação', city: 'Indaiatuba', address: { street: 'Rua Perto', number: '1', city: 'Indaiatuba', state: 'SP', cep: '' } } });
+    expect((await pool.query(`SELECT count(*)::int c FROM neighborhoods WHERE name = 'Jardim Cotação'`)).rows[0].c).toBe(0);
     expect((await post(orderBody(f, { address: addr('Rua Perto', { neighborhoodId: f.hoodOffId }) }))).json().error.code).toBe('area_not_served');
+  });
+
+  it('Google Maps: endereço com CEP, rota pelas ruas, guardada; com a chave, só o Google vale', async () => {
+    const asked: string[] = [];
+    setGoogle(async (_o, dest) => {
+      asked.push(dest);
+      if (dest.includes('Rua Do Google')) return { meters: 4873, start: null, end: { lat: -23.07, lng: -47.18 }, types: ['route'], partial: false };
+      if (dest.includes('Cidade Inteira')) return { meters: 9000, start: null, end: null, types: ['locality', 'political'], partial: false };
+      return null;
+    });
+    const q = (street: string) => app.inject({ method: 'POST', url: '/api/public/quote', payload: { items: orderBody(f).items, neighborhoodId: f.hoodAId, address: { street, number: '787', city: 'Indaiatuba', state: 'SP', cep: '13336030' } } });
+    expect((await q('Rua Do Google')).json()).toMatchObject({ deliveryFeeCents: 800, deliveryDistanceKm: 4.87, deliveryDistanceBy: 'route' });
+    expect(asked[0]).toBe('Rua Do Google, 787, Centro, Indaiatuba - SP, 13336-030, Brasil');
+    await q('Rua Do Google');
+    expect(asked).toHaveLength(1); // guardado
+    // Google só acha a cidade (vago demais) ou não acha: pede para conferir o CEP, sem cair em outro mapa nem na taxa do bairro.
+    let r = (await q('Cidade Inteira Rua Perto')).json();
+    expect(r.error).toMatchObject({ code: 'address_not_found', details: { field: 'address.cep' } });
+    expect(r.error.message).toMatch(/Confira o CEP e o número/);
+    setGoogle(async () => { throw new Error('respondeu 403 PERMISSION_DENIED'); });
+    r = (await post(orderBody(f, { address: addr('Rua Perto') }))).json();
+    expect(r.error.code).toBe('address_not_found');
+  });
+
+  it('valor por km: km × valor, taxa mínima e raio máximo; cliente sem escolher bairro', async () => {
+    await pool.query(`UPDATE store_settings SET distance_pricing = 'per_km', price_per_km_cents = 200, distance_min_fee_cents = 500, distance_max_km = 8`);
+    setGoogle(async (_o, dest) => ({ meters: dest.includes('Rua Media') ? 4873 : dest.includes('Rua Perto') ? 1000 : 9500, start: null, end: null, types: ['street_address'], partial: false }));
+    // Só CEP (bairro vem do CEP, pode faltar): 4,87 km × R$ 2,00 = R$ 9,74.
+    const q = (street: string, extra: object = {}) => app.inject({ method: 'POST', url: '/api/public/quote', payload: { items: orderBody(f).items, ...extra, address: { street, number: '10', city: 'Indaiatuba', state: 'SP', cep: '13336030' } } });
+    expect((await q('Rua Media')).json()).toMatchObject({ deliveryFeeCents: 974, deliveryDistanceKm: 4.87 });
+    expect((await q('Rua Perto', { neighborhoodName: 'Jardim do CEP' })).json()).toMatchObject({ deliveryFeeCents: 500 }); // mínimo
+    expect((await q('Rua Longe')).json().error.message).toMatch(/9,5 km.*até 8,0 km/);
+    const res = await post(orderBody(f, { address: addr('Rua Media', { neighborhoodId: undefined, neighborhoodName: '' }) }));
+    expect(res.statusCode).toBe(201);
+    const o = (await pool.query('SELECT * FROM orders WHERE public_token = $1', [res.json().token])).rows[0];
+    expect(o).toMatchObject({ delivery_fee_cents: 974, delivery_fee_source: 'distance', neighborhood_id: null });
+    // Painel salva e devolve a forma de cobrança.
+    const h = await loginAs(app, 'gerente@t.local');
+    const put = await app.inject({ method: 'PUT', url: '/api/admin/settings/distance', headers: h, payload: { mode: 'distance', storeLat: -23.1, storeLng: -47.2, tiers: [], pricing: 'per_km', pricePerKmCents: 250, minFeeCents: 600, maxKm: null } });
+    expect(put.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/admin/settings', headers: h })).json().distance).toMatchObject({ pricing: 'per_km', pricePerKmCents: 250, minFeeCents: 600, maxKm: null });
+    const bad = await app.inject({ method: 'PUT', url: '/api/admin/settings/distance', headers: h, payload: { mode: 'distance', storeLat: -23.1, storeLng: -47.2, tiers: [], pricing: 'per_km', pricePerKmCents: 0 } });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it('taxa por bairro continua exigindo o bairro', async () => {
+    await pool.query(`UPDATE store_settings SET delivery_fee_mode = 'neighborhood'`);
+    const res = await post(orderBody(f, { address: addr('Rua Perto', { neighborhoodId: undefined }) }));
+    expect(res.json().error).toMatchObject({ code: 'area_not_served', message: 'Selecione o bairro.' });
+  });
+
+  it('painel: preenche a taxa dos bairros "a combinar" pelo mapa, sem mexer nos definidos', async () => {
+    const h = await loginAs(app, 'gerente@t.local');
+    await pool.query(`INSERT INTO neighborhoods (store_id, name, city, fee_cents, fee_pending) VALUES ($1,'Jardim Perto','Indaiatuba',0,true), ($1,'Jardim Sumido','Indaiatuba',0,true)`, [f.storeId]);
+    setGoogle(async (_o, dest) => (dest.startsWith('Jardim Perto') ? { meters: 1500, start: null, end: null, types: ['sublocality'], partial: false } : null));
+    setGeocoder(async () => null);
+    const r = (await app.inject({ method: 'POST', url: '/api/admin/neighborhoods/fill-fees', headers: h, payload: {} })).json();
+    expect(r.updated).toEqual([{ name: 'Jardim Perto', km: 1.5, feeCents: 500 }]);
+    expect(r.skipped).toEqual([{ name: 'Jardim Sumido', reason: 'não achei no mapa' }]);
+    expect((await pool.query(`SELECT fee_cents, fee_pending FROM neighborhoods WHERE name = 'Jardim Perto'`)).rows[0]).toEqual({ fee_cents: 500, fee_pending: false });
+    expect((await pool.query('SELECT fee_cents FROM neighborhoods WHERE id = $1', [f.hoodAId])).rows[0].fee_cents).toBe(600);
   });
 
   it('guarda o resultado do mapa e não consulta de novo', async () => {
@@ -104,7 +178,7 @@ describe('taxa por km', () => {
     const ok = await app.inject({ method: 'PUT', url: '/api/admin/settings/distance', headers: h, payload: { mode: 'distance', storeLat: -23.1, storeLng: -47.2, tiers: [{ maxKm: 3, feeCents: 600 }, { maxKm: 1.5, feeCents: 400 }] } });
     expect(ok.statusCode).toBe(200);
     const s = (await app.inject({ method: 'GET', url: '/api/admin/settings', headers: h })).json();
-    expect(s.distance).toEqual({ mode: 'distance', storeLat: -23.1, storeLng: -47.2, tiers: [{ maxKm: 1.5, feeCents: 400 }, { maxKm: 3, feeCents: 600 }] });
+    expect(s.distance).toEqual({ mode: 'distance', storeLat: -23.1, storeLng: -47.2, tiers: [{ maxKm: 1.5, feeCents: 400 }, { maxKm: 3, feeCents: 600 }], pricing: 'tiers', pricePerKmCents: 0, minFeeCents: 0, maxKm: null });
     const staff = await loginAs(app, 'atendente@t.local');
     expect((await app.inject({ method: 'PUT', url: '/api/admin/settings/distance', headers: staff, payload: { mode: 'neighborhood', storeLat: null, storeLng: null, tiers: [] } })).statusCode).toBe(403);
   });
