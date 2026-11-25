@@ -15,6 +15,9 @@ export default defineConfig({
       WEB_DIST_DIR: './nonexistent',
       ORDER_RATE_LIMIT: '10000',
       LOGIN_RATE_LIMIT: '10000',
+      FOOD99_APP_ID: '5764607584567296012',
+      FOOD99_APP_SECRET: 'segredo-de-teste-99food',
+      FOOD99_API_URL: 'http://openapi.99food.test',
     },
   },
 });

@@ -27,6 +27,12 @@ const schema = z.object({
   ORS_API_KEY: z.string().trim().optional().default(''),
   // Chave do Google Maps (Routes API): distância de carro e endereço do cliente pelo Google. Tem prioridade sobre os serviços grátis.
   GOOGLE_MAPS_API_KEY: z.string().trim().optional().default(''),
+  // 99Food (Plataforma Aberta): credenciais do app criado no portal de desenvolvedores. Sem elas, a integração fica desligada.
+  FOOD99_APP_ID: z.string().trim().regex(/^\d*$/, 'FOOD99_APP_ID deve ter só números').optional().default(''),
+  FOOD99_APP_SECRET: z.string().trim().optional().default(''),
+  FOOD99_API_URL: z.string().url().default('https://openapi.99food.com'),
+  // Aceitar sozinho os pedidos do 99Food assim que chegam (o 99 cancela o pedido não aceito em 5 minutos).
+  FOOD99_AUTO_CONFIRM: z.enum(['true', 'false']).default('true'),
 });
 
 // Hospedagens que informam o endereço público sozinhas (Render, Railway): usa se PUBLIC_URL não foi definido.

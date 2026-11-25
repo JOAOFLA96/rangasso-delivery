@@ -9,6 +9,7 @@ export interface OrderRow {
   id: string; number: number; status: Status; print_status: PrintStatus; customer_name: string; customer_phone: string;
   neighborhood_name: string; fulfillment?: 'delivery' | 'pickup'; street: string; street_number: string; complement: string; payment_method: keyof typeof PAYMENT;
   change_for_cents: number | null; total_cents: number; created_at: string; item_count: number; notes: string;
+  channel?: 'site' | '99food'; external_short_code?: string | null;
 }
 
 interface Filters { q: string; status: string; printStatus: string; payment: string; from: string; to: string }
@@ -163,6 +164,7 @@ export function OrdersTab() {
                   <button className={`a-order-card ${selected === o.id ? 'sel' : ''} ${newIds.has(o.id) ? 'is-new' : ''}`} onClick={() => open(o.id)}>
                     <div className="oc-top">
                       <strong className="oc-num">#{o.number}</strong>
+                      {o.channel === '99food' && <span className="pill pill-sm pill-99">99Food{o.external_short_code ? ` nº ${o.external_short_code}` : ''}</span>}
                       <span className={`pill ${STATUS[o.status].cls}`}>{statusLabel(o.status, o.fulfillment)}</span>
                       <span className="oc-time">{view === 'active' ? formatTime(o.created_at) : formatDateTime(o.created_at)}</span>
                     </div>

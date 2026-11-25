@@ -72,13 +72,15 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
   const address = `${o.street}, ${o.street_number}${o.complement ? ` - ${o.complement}` : ''} - ${o.neighborhood_name}${o.city ? `, ${o.city}` : ''}`;
   const changeBack = o.change_for_cents ? o.change_for_cents - o.total_cents : null;
   const ps = o.print_status as PrintStatus;
+  const app = o.channel === '99food';
+  const x = (o.external_info ?? {}) as Record<string, any>;
 
   return (
     <div className="a-detail">
       <div className="a-detail-head">
         <button className="btn btn-ghost back-mobile" onClick={onClose}>← Voltar</button>
         <div>
-          <h2 className="a-detail-num">Pedido #{o.number}</h2>
+          <h2 className="a-detail-num">Pedido #{o.number}{app && <span className="pill pill-99">99Food{o.external_short_code ? ` nº ${o.external_short_code}` : ''}</span>}</h2>
           <p className="muted small">{formatDateTime(o.created_at)}</p>
         </div>
         <span className={`pill ${STATUS[o.status as Status].cls}`}>{statusLabel(o.status as Status, o.fulfillment)}</span>
@@ -92,14 +94,32 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
       )}
       {o.status === 'cancelled' && <div className="alert alert-error">Cancelado: {o.cancel_reason}</div>}
 
+      {app && (
+        <div className="alert alert-info">
+          <strong>Pedido do 99Food.</strong>{' '}
+          {o.external_delivery === 'platform' ? 'Entrega feita por entregador do 99Food.' : o.external_delivery === 'pickup' ? 'Cliente retira na loja.' : 'Entrega feita pela loja.'}{' '}
+          {o.payment_method === 'online' ? 'Pago no app: nada a receber do cliente.' : x.collectCents ? `Receber na entrega: ${brl(x.collectCents)}.` : ''}
+          {x.handoverCode && o.external_delivery === 'platform' ? ` Código para o entregador: ${x.handoverCode}.` : ''}
+          {x.takeawayCode ? ` Código de retirada: ${x.takeawayCode}.` : ''}
+          {' '}As mudanças de etapa aqui são enviadas ao 99Food.
+        </div>
+      )}
+
       <section className="a-block">
         <h3>Cliente</h3>
         <p><strong>{o.customer_name}</strong></p>
+        {app ? (
+          <p>
+            {x.virtualPhone ? <><a href={`tel:${x.virtualPhone}`}>{x.virtualPhone}</a>{x.locator ? ` · ramal ${x.locator}` : ''}</> : 'Telefone pelo app 99Food'}
+            {x.handoverUrl && o.external_delivery === 'store' ? <> · <a href={x.handoverUrl} target="_blank" rel="noreferrer">Página de entrega do 99</a></> : null}
+          </p>
+        ) : (
         <p>
           <a href={`tel:${o.customer_phone}`}>{fmtPhone(o.customer_phone)}</a>
           {' · '}
           <a href={`https://wa.me/55${o.customer_phone}`} target="_blank" rel="noreferrer">WhatsApp</a>
         </p>
+        )}
         {pickup ? <p className="pill pill-pickup">🛍️ Cliente vai retirar na loja</p> : <>
           <p>{address}{o.cep ? ` · CEP ${o.cep.slice(0, 5)}-${o.cep.slice(5)}` : ''}</p>
           {o.reference && <p className="muted">Referência: {o.reference}</p>}
@@ -123,10 +143,11 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
         <div className="totals">
           <div><span>Subtotal</span><span>{brl(o.subtotal_cents)}</span></div>
           {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{o.delivery_distance_km != null ? ` (${Number(o.delivery_distance_km).toFixed(1).replace('.', ',')} km, ${o.delivery_distance_by === 'route' ? 'pelas ruas' : 'linha reta'})` : ''}</span><span>{o.delivery_fee_pending ? <strong>A COMBINAR (bairro sem taxa definida)</strong> : brl(o.delivery_fee_cents)}</span></div>}
+          {o.extra_fees_cents > 0 && <div><span>Taxas do app</span><span>{brl(o.extra_fees_cents)}</span></div>}
           {o.discount_cents > 0 && <div><span>Desconto</span><span>− {brl(o.discount_cents)}</span></div>}
           <div className="total"><span>{o.delivery_fee_pending ? 'Total + taxa' : 'Total'}</span><strong>{brl(o.total_cents)}</strong></div>
         </div>
-        <p><strong>Pagamento:</strong> {pickup && o.payment_method === 'card' ? 'Cartão na retirada' : PAYMENT[o.payment_method as keyof typeof PAYMENT]}
+        <p><strong>Pagamento:</strong> {app && x.payLabel ? `${x.payLabel}${o.payment_method === 'online' ? ' (pago no app)' : ''}` : pickup && o.payment_method === 'card' ? 'Cartão na retirada' : PAYMENT[o.payment_method as keyof typeof PAYMENT]}
           {o.change_for_cents ? ` · troco para ${brl(o.change_for_cents)} (levar ${brl(changeBack)})` : o.payment_method === 'cash' ? ' · sem troco' : ''}</p>
       </section>
 
@@ -171,7 +192,7 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
         <ol className="a-history">
           {d.history.map((h, i) => (
             <li key={i}>
-              <strong>{statusLabel(h.to_status, o.fulfillment)}</strong> · {formatDateTime(h.created_at)} · {h.user_name ?? 'Cliente (cardápio)'}
+              <strong>{statusLabel(h.to_status, o.fulfillment)}</strong> · {formatDateTime(h.created_at)} · {h.user_name ?? (app ? '99Food' : 'Cliente (cardápio)')}
               {h.note && <div className="muted small">{h.note}</div>}
             </li>
           ))}
@@ -179,7 +200,7 @@ export function OrderDetail({ id, version, onClose, onChanged }: { id: string; v
       </section>
 
       {dialog === 'cancel' && (
-        <Confirm title={`Cancelar pedido #${o.number}?`} text="O pedido continua no histórico como cancelado, e o estoque dos produtos controlados é devolvido. Esta ação não pode ser desfeita."
+        <Confirm title={`Cancelar pedido #${o.number}?`} text={app ? 'O cancelamento também é enviado ao 99Food, que avisa o cliente. Esta ação não pode ser desfeita.' : 'O pedido continua no histórico como cancelado, e o estoque dos produtos controlados é devolvido. Esta ação não pode ser desfeita.'}
           confirmLabel="Cancelar pedido" danger requireReason="Motivo do cancelamento" onClose={() => setDialog(null)} onConfirm={(r) => setStatus('cancelled', r)} />
       )}
       {dialog === 'reprint' && (

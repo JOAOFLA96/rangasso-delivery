@@ -7,6 +7,7 @@ import { StoreSettings } from './StoreSettings';
 import { UsersSettings } from './UsersSettings';
 import { AuditLog } from './AuditLog';
 import { MyAccount } from './MyAccount';
+import { Food99Settings } from './Food99Settings';
 
 export function SettingsTab() {
   const { user } = useSession();
@@ -15,7 +16,7 @@ export function SettingsTab() {
     ['cardapio', 'Cardápio'],
     ['entrega', 'Entrega e horários'],
     ['impressora', 'Impressora'],
-    ...(manage ? [['loja', 'Dados da loja'], ['auditoria', 'Auditoria']] : []),
+    ...(manage ? [['loja', 'Dados da loja'], ['99food', '99Food'], ['auditoria', 'Auditoria']] : []),
     ...(user.role === 'owner' ? [['usuarios', 'Usuários']] : []),
     ['conta', 'Minha conta'],
   ];
@@ -32,6 +33,7 @@ export function SettingsTab() {
           <Route path="impressora" element={<PrinterSettings />} />
           <Route path="loja" element={<StoreSettings />} />
           <Route path="usuarios" element={<UsersSettings />} />
+          <Route path="99food" element={<Food99Settings />} />
           <Route path="auditoria" element={<AuditLog />} />
           <Route path="conta" element={<MyAccount />} />
           <Route path="*" element={<Navigate to="cardapio" replace />} />

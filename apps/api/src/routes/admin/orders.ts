@@ -11,12 +11,14 @@ import { ORDER_STATUSES, changeStatus, getOrderDetail } from '../../services/ord
 import { createPrintJob, resolveJob } from '../../services/print.js';
 import { imageUrl } from '../../services/menu.js';
 import { notifyOrder, pushForStatus } from '../../services/push.js';
+import { pushStatusTo99 } from '../../services/food99.js';
 
 const listQuery = z.object({
   q: z.string().max(80).optional(),
   status: z.enum(ORDER_STATUSES).optional(),
   printStatus: z.enum(['not_queued', 'pending', 'claimed', 'sending', 'sent', 'printed', 'failed', 'uncertain']).optional(),
-  payment: z.enum(['cash', 'pix', 'card']).optional(),
+  payment: z.enum(['cash', 'pix', 'card', 'online']).optional(),
+  channel: z.enum(['site', '99food']).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   active: z.enum(['1', '0']).optional(),
@@ -45,6 +47,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     if (q.active === '1') where.push(`o.status NOT IN ('completed','cancelled')`);
     if (q.printStatus) add('o.print_status = ?', q.printStatus);
     if (q.payment) add('o.payment_method = ?', q.payment);
+    if (q.channel) add('o.channel = ?', q.channel);
     // Datas no fuso da loja.
     if (q.from) add(`o.created_at >= (?::date)::timestamp AT TIME ZONE (SELECT timezone FROM store_settings WHERE store_id = $1)`, q.from);
     if (q.to) add(`o.created_at < ((?::date) + 1)::timestamp AT TIME ZONE (SELECT timezone FROM store_settings WHERE store_id = $1)`, q.to);
@@ -52,7 +55,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     const rows = await pool.query(
       `SELECT o.id, o.number, o.status, o.print_status, o.customer_name, o.customer_phone, o.neighborhood_name, o.street, o.street_number,
               o.complement, o.payment_method, o.change_for_cents, o.subtotal_cents, o.delivery_fee_cents, o.delivery_fee_pending, o.discount_cents, o.total_cents,
-              o.created_at, o.updated_at, o.notes, o.fulfillment,
+              o.created_at, o.updated_at, o.notes, o.fulfillment, o.channel, o.external_short_code, o.external_delivery,
               (SELECT coalesce(sum(quantity),0)::int FROM order_items WHERE order_id = o.id) AS item_count,
               count(*) OVER()::int AS total_count
          FROM orders o WHERE ${where.join(' AND ')}
@@ -88,7 +91,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     const body = parse(z.object({ status: z.enum(ORDER_STATUSES), note: z.string().max(300).default('') }), req.body);
     if (body.status === 'cancelled' && admin.role === 'staff') throw badRequest('forbidden_cancel', 'Somente gerente ou dono pode cancelar pedidos.');
     const r = await tx(async (db) => {
-      const res = await changeStatus(db, admin.storeId, id, body.status, admin.userId, body.note);
+      const res = await changeStatus(db, admin.storeId, id, body.status, admin.userId, body.note, (o) => pushStatusTo99(db, admin.storeId, o, body.status, body.note));
       await audit(db, { storeId: admin.storeId, userId: admin.userId, ip: req.ip }, 'order.status', 'order', id, { from: res.from, to: body.status, note: body.note });
       return res;
     });
