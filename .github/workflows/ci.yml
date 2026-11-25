@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # o Playwright ainda não instala o Chromium no Ubuntu 26.04 (ubuntu-latest)
     services:
       postgres:
         image: postgres:16
@@ -134,7 +134,7 @@ jobs:
           Pop-Location
 
   deploy-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # o Playwright ainda não instala o Chromium no Ubuntu 26.04 (ubuntu-latest)
     steps:
       - uses: actions/checkout@v4
       - name: Imagem Docker de produção
