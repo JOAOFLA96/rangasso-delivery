@@ -7,6 +7,7 @@ import { OrdersTab } from './OrdersTab';
 import { SettingsTab } from './settings/SettingsTab';
 import { ReviewsTab } from './ReviewsTab';
 import { LabelsTab } from './labels/LabelsTab';
+import { DeliveriesTab } from './DeliveriesTab';
 import '../admin.css';
 
 export default function AdminApp() {
@@ -42,6 +43,7 @@ export default function AdminApp() {
             <img src="/brand/logo-rangasso-trim.png" alt="Rangasso" className="a-logo" />
             <nav className="a-tabs" aria-label="Seções">
               <NavLink to="/admin/pedidos">Pedidos</NavLink>
+              <NavLink to="/admin/entregas">Entregas</NavLink>
               <NavLink to="/admin/avaliacoes">Avaliações</NavLink>
               <NavLink to="/admin/etiquetas">Etiquetas</NavLink>
               <NavLink to="/admin/configuracoes">Configurações</NavLink>
@@ -53,6 +55,7 @@ export default function AdminApp() {
           </header>
           <Routes>
             <Route path="pedidos/*" element={<OrdersTab />} />
+            <Route path="entregas" element={<DeliveriesTab />} />
             <Route path="avaliacoes" element={<ReviewsTab />} />
             <Route path="etiquetas/*" element={<LabelsTab />} />
             <Route path="configuracoes/*" element={<SettingsTab />} />
