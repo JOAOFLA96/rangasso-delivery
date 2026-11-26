@@ -323,7 +323,7 @@ export async function setExternalFlags(db: Db, orderId: string, flags: Record<st
 }
 
 // Reflete no 99Food uma mudança de etapa feita no painel. Lança erro (e a mudança não é gravada) se o 99 recusar.
-export async function pushStatusTo99(db: PoolClient, storeId: string, order: any, to: string, note: string) {
+export async function pushStatusTo99(db: PoolClient, storeId: string, order: any, to: string, note: string, courier?: { name: string; phone: string } | null) {
   if (order.channel !== '99food' || !order.external_id || !order.external_shop_id) return;
   if (!food99Enabled()) throw new AppError(409, 'food99_disabled', 'A integração com o 99Food está desligada (faltam as credenciais no servidor).');
   const info = order.external_info ?? {};
@@ -343,9 +343,11 @@ export async function pushStatusTo99(db: PoolClient, storeId: string, order: any
         flags.ready = true;
       }
       if ((to === 'out_for_delivery' || to === 'completed') && order.external_delivery === 'store' && !info.dispatched) {
+        // Motoboy da saída (aba Entregas) ou, sem ele, a própria loja com o telefone de Dados da loja.
         const st = await getSettings(db, storeId);
-        const phone = onlyDigits(String(st.phone ?? st.whatsapp ?? '')).replace(/^55(?=\d{10,11}$)/, '');
-        await food99Api.dispatch(shop, id, { name: s(st.display_name, 60) || 'Entregador', phone: phone || '0' }, n(info.expectedArrivedEta) || Math.floor(Date.now() / 1000) + 40 * 60);
+        const name = s(courier?.name, 60) || s(st.display_name, 60) || 'Entregador';
+        const phone = onlyDigits(String(courier?.phone || st.phone || st.whatsapp || '')).replace(/^55(?=\d{10,11}$)/, '');
+        await food99Api.dispatch(shop, id, { name, phone: phone || '0' }, n(info.expectedArrivedEta) || Math.floor(Date.now() / 1000) + 40 * 60);
         flags.dispatched = true;
       }
       if (to === 'completed' && order.external_delivery === 'store') await food99Api.delivered(shop, id);

@@ -210,6 +210,20 @@ describe('painel -> 99Food', () => {
     ]);
   });
 
+  it('saída da aba Entregas envia ao 99 o motoboy escolhido', async () => {
+    const { o } = await setup();
+    const owner = await loginAs(app, 'dono@t.local');
+    const c = (await app.inject({ method: 'POST', url: '/api/admin/couriers', headers: owner, payload: { name: 'Carlos Lima', phone: '(19) 99876-5432' } })).json().id;
+    const run = await app.inject({ method: 'POST', url: '/api/admin/delivery-runs', headers: owner, payload: { courierId: c, orderIds: [o.id] } });
+    expect(run.statusCode).toBe(201);
+    calls.length = 0;
+    const dep = await app.inject({ method: 'POST', url: `/api/admin/delivery-runs/${run.json().id ?? run.json().run?.id}/depart`, headers: owner });
+    expect(dep.statusCode).toBe(200);
+    const d = JSON.parse(calls.find((x) => x.path === '/v1/order/selfdelivery/dispatch')!.body!);
+    expect(d.courier_info).toMatchObject({ courier_name: 'Carlos Lima', courier_first_name: 'Carlos', courier_last_name: 'Lima', courier_phone: '19998765432' });
+    expect((await order99()).status).toBe('out_for_delivery');
+  });
+
   it('tela de configuração mostra a integração e o endereço do webhook', async () => {
     const { h } = await setup();
     const r = (await app.inject({ method: 'GET', url: '/api/admin/integrations/99food', headers: h })).json();

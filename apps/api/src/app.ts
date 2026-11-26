@@ -25,6 +25,7 @@ import { adminUserRoutes } from './routes/admin/users.js';
 import { adminLabelRoutes } from './routes/admin/labels.js';
 import { adminFood99Routes } from './routes/admin/food99.js';
 import { food99Routes } from './routes/food99.js';
+import { adminDeliveryRoutes } from './routes/admin/deliveries.js';
 
 export async function buildApp(opts: { logger?: boolean } = {}) {
   const app = Fastify({
@@ -98,6 +99,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       await admin.register(adminUserRoutes);
       await admin.register(adminLabelRoutes);
       await admin.register(adminFood99Routes);
+      await admin.register(adminDeliveryRoutes);
     },
     { prefix: '/api/admin' },
   );

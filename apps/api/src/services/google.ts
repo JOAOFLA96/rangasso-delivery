@@ -160,3 +160,63 @@ export async function probeGoogle() {
     return { provider: 'google', configured: true, ok: false, ms: Date.now() - t, error: (e as Error).message };
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Rota do motoboy: saindo da loja, passando por todas as entregas e voltando. Com optimize, o Google escolhe a ordem das
+// paradas (optimizeWaypointOrder); sem, mede a ordem dada. Paradas vão como endereço escrito (o Google acha cada uma).
+
+export interface TripLeg { meters: number; seconds: number }
+export interface Trip { order: number[]; legs: TripLeg[]; meters: number; seconds: number }
+export type TripFn = (origin: Point | string, stops: string[], optimize: boolean) => Promise<Trip | null>;
+
+const seconds = (d?: string) => (d ? Math.round(parseFloat(d)) || 0 : 0); // "123s"
+
+const trip: TripFn = async (origin, stops, optimize) => {
+  const key = config.GOOGLE_MAPS_API_KEY;
+  if (!key) return null;
+  if (cooldownUntil > Date.now()) throw new Error(`pausado após erro: ${lastError}`);
+  return throttled(async () => {
+    const res = await fetch(ROUTES_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-goog-api-key': key,
+        'x-goog-fieldmask': 'routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration,routes.optimizedIntermediateWaypointIndex',
+      },
+      body: JSON.stringify({
+        origin: waypoint(origin), destination: waypoint(origin), intermediates: stops.map((s) => ({ address: s })),
+        travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE', optimizeWaypointOrder: optimize, languageCode: 'pt-BR', regionCode: 'BR',
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: { status?: string; message?: string } } | null;
+      if (res.status === 400 || res.status === 404) throw new Error(`não achou algum endereço${body?.error?.message ? ` (${body.error.message.slice(0, 120)})` : ''}`);
+      lastError = `respondeu ${res.status}${body?.error?.status ? ` ${body.error.status}` : ''}`;
+      if (res.status === 403 || res.status === 429) cooldownUntil = Date.now() + COOLDOWN_MS;
+      throw new Error(lastError);
+    }
+    const data = (await res.json()) as {
+      routes?: { distanceMeters?: number; duration?: string; legs?: { distanceMeters?: number; duration?: string }[]; optimizedIntermediateWaypointIndex?: number[] }[];
+    };
+    const r = data.routes?.[0];
+    if (!r?.legs?.length) return null;
+    const idx = r.optimizedIntermediateWaypointIndex;
+    // Sem otimizar, o Google devolve [-1] ou nada: vale a ordem enviada.
+    const order = optimize && idx?.length === stops.length && idx.every((i) => i >= 0) ? idx : stops.map((_, i) => i);
+    return {
+      order,
+      legs: r.legs.map((l) => ({ meters: l.distanceMeters ?? 0, seconds: seconds(l.duration) })),
+      meters: r.distanceMeters ?? 0,
+      seconds: seconds(r.duration),
+    };
+  });
+};
+
+let tripFn: TripFn = trip;
+// Testes trocam por um falso.
+export function setTripPlanner(fn: TripFn | null) {
+  tripFn = fn ?? trip;
+}
+export const tripPlannerEnabled = () => tripFn !== trip || !!config.GOOGLE_MAPS_API_KEY;
+export const planTrip: TripFn = (origin, stops, optimize) => (tripPlannerEnabled() ? tripFn(origin, stops, optimize) : Promise.resolve(null));
