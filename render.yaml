@@ -10,7 +10,7 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /api/health
+    healthCheckPath: /api/ping
     envVars:
       # Endereço do Postgres externo (postgresql://...?sslmode=require). Preenchido no painel do Render.
       - key: DATABASE_URL
