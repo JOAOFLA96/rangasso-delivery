@@ -135,6 +135,7 @@ describe('webhook do 99Food', () => {
     const again = await hook(orderNewRaw());
     expect(again.json()).toMatchObject({ errno: 0 });
     expect((await pool.query(`SELECT count(*)::int AS n FROM orders WHERE channel = '99food'`)).rows[0].n).toBe(1);
+    await until(async () => (await order99()).status === 'confirmed'); // não deixa o aceite rodando para o próximo teste
   });
 
   it('aceite que falha deixa o pedido em Recebido com aviso no histórico', async () => {
@@ -222,6 +223,16 @@ describe('painel -> 99Food', () => {
     const d = JSON.parse(calls.find((x) => x.path === '/v1/order/selfdelivery/dispatch')!.body!);
     expect(d.courier_info).toMatchObject({ courier_name: 'Carlos Lima', courier_first_name: 'Carlos', courier_last_name: 'Lima', courier_phone: '19998765432' });
     expect((await order99()).status).toBe('out_for_delivery');
+  });
+
+  it('pedido com entrega do 99 não entra nas saídas dos nossos motoboys', async () => {
+    const { o } = await setup();
+    await pool.query(`UPDATE orders SET external_delivery = 'platform' WHERE id = $1`, [o.id]);
+    const owner = await loginAs(app, 'dono@t.local');
+    const c = (await app.inject({ method: 'POST', url: '/api/admin/couriers', headers: owner, payload: { name: 'Carlos', phone: '' } })).json().id;
+    const run = await app.inject({ method: 'POST', url: '/api/admin/delivery-runs', headers: owner, payload: { courierId: c, orderIds: [o.id] } });
+    expect(run.statusCode).toBe(400);
+    expect(run.json().error.message).toContain('entrega própria');
   });
 
   it('tela de configuração mostra a integração e o endereço do webhook', async () => {

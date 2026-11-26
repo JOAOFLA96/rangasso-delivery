@@ -39,7 +39,7 @@ Desligar o aceite automático: variável `FOOD99_AUTO_CONFIRM=false` (aí é pre
 ## Limites desta versão
 
 - O cardápio não é enviado ao 99: produtos e preços continuam sendo mantidos no 99Food Loja.
-- Pedidos de entrega feita pelo 99 chegam e imprimem; a entrega fica com o 99.
+- Para entregar pedidos do 99 com os nossos motoboys (aba Entregas), a loja precisa estar com **entrega própria** no 99Food. Com a entrega do 99, os pedidos chegam e imprimem, mas quem leva é o entregador do app e eles não entram nas saídas.
 - Respostas a pedidos de cancelamento/reembolso do cliente são dadas no app 99Food Loja.
 - Ainda não foi testada com o 99 de verdade: depende da aprovação do cadastro. Os testes automáticos
   simulam o 99 com o formato da documentação oficial.
