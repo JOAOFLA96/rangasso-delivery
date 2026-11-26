@@ -5,6 +5,8 @@ import { audit } from '../../lib/audit.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { parse } from '../../lib/validate.js';
 import { requireRole } from '../../auth.js';
+import { emitStoreEvent } from '../../lib/events.js';
+import { createLabelPrintJob, loadLabelPrinter } from '../../services/print.js';
 
 // Etiquetas de validade da cozinha (insumos e preparos). Quem imprime: qualquer perfil.
 // Quem cadastra produtos e prazos: dono ou gerente.
@@ -47,6 +49,13 @@ const printBody = z.object({
   quantityText: z.string().trim().max(20).default(''),
   extra: z.string().trim().max(40).default(''),
   copies: z.number().int().min(1).max(50).default(1),
+  // browser: o navegador imprime (impressora de etiqueta 50x30). agent: vai para a fila da Epson do caixa.
+  target: z.enum(['browser', 'agent', 'tspl']).default('browser'),
+});
+
+const labelForAgent = (r: any, notes: string) => ({
+  productName: r.product_name, labelType: r.label_type, storage: r.storage, handledAt: r.handled_at.toISOString(),
+  expiresAt: r.expires_at.toISOString(), responsible: r.responsible, lot: r.lot, quantityText: r.quantity_text, extra: r.extra, notes,
 });
 
 const productRow = (r: any) => ({
@@ -83,6 +92,54 @@ export async function adminLabelRoutes(app: FastifyInstance) {
       store: { name: store.rows[0]?.display_name ?? '', timezone: store.rows[0]?.timezone ?? 'America/Sao_Paulo' },
       responsibles: people.rows.map((r) => r.responsible),
     };
+  });
+
+  // Impressora de etiquetas (TSPL) ligada a um PC com o agente.
+  app.get('/labels/printer', async (req) => {
+    const storeId = req.admin!.storeId;
+    const devices = await pool.query(
+      `SELECT id, name, agent_version, last_seen_at FROM print_devices WHERE store_id = $1 AND revoked_at IS NULL ORDER BY created_at`, [storeId],
+    );
+    return { printer: await loadLabelPrinter(pool, storeId), devices: devices.rows };
+  });
+
+  app.put('/labels/printer', managers, async (req) => {
+    const b = parse(z.object({
+      deviceId: uuid.nullable(),
+      printerName: z.string().trim().max(120),
+      widthMm: z.number().min(20).max(104),
+      heightMm: z.number().min(15).max(200),
+      gapMm: z.number().min(0).max(20),
+      speed: z.number().int().min(1).max(6),
+      density: z.number().int().min(0).max(15),
+      offsetXmm: z.number().min(-10).max(10),
+      offsetYmm: z.number().min(-10).max(10),
+      rotate: z.boolean(),
+    }), req.body);
+    const storeId = req.admin!.storeId;
+    return tx(async (db) => {
+      if (b.deviceId) {
+        const d = await db.query('SELECT 1 FROM print_devices WHERE id = $1 AND store_id = $2 AND revoked_at IS NULL', [b.deviceId, storeId]);
+        if (!d.rowCount) throw notFound('Agente');
+      }
+      await db.query(
+        `UPDATE store_settings SET label_device_id=$2, label_printer_name=$3, label_width_mm=$4, label_height_mm=$5, label_gap_mm=$6,
+                label_speed=$7, label_density=$8, label_offset_x_mm=$9, label_offset_y_mm=$10, label_rotate=$11, updated_at=now()
+          WHERE store_id=$1`,
+        [storeId, b.deviceId, b.printerName, b.widthMm, b.heightMm, b.gapMm, b.speed, b.density, b.offsetXmm, b.offsetYmm, b.rotate],
+      );
+      await audit(db, actor(req), 'label_printer.update', 'store_settings', storeId, b);
+      return { printer: await loadLabelPrinter(db, storeId) };
+    });
+  });
+
+  // Teste de calibração na impressora de etiquetas (moldura do tamanho da etiqueta).
+  app.post('/labels/printer/test', async (req) => {
+    const b = parse(z.object({ copies: z.number().int().min(1).max(10).default(3) }), req.body ?? {});
+    const storeId = req.admin!.storeId;
+    const jobId = await tx(async (db) => (await createLabelPrintJob(db, storeId, null, b.copies, req.admin!.userId, 'tspl')).id);
+    emitStoreEvent(storeId, { type: 'print.queued', jobId });
+    return { jobId };
   });
 
   app.post('/labels/products', managers, async (req) => {
@@ -133,7 +190,8 @@ export async function adminLabelRoutes(app: FastifyInstance) {
     if (handledAt.getTime() > now + 24 * 3600_000) throw badRequest('handled_in_future', 'A data de manipulação está no futuro.');
     if (handledAt.getTime() < now - 365 * 24 * 3600_000) throw badRequest('handled_too_old', 'A data de manipulação está muito antiga.');
 
-    return tx(async (db) => {
+    const out = await tx(async (db) => {
+      let productNotes = '';
       let productName = b.productName;
       let productId: string | null = null;
       let expiresAt: Date | null = null;
@@ -142,6 +200,7 @@ export async function adminLabelRoutes(app: FastifyInstance) {
         if (!p) throw notFound('Produto de etiqueta');
         productId = p.id;
         productName = p.name;
+        productNotes = p.notes;
         const h = p[STORAGE_COLUMN[b.storage]] as number | null;
         if (h != null) expiresAt = new Date(handledAt.getTime() + h * 3600_000);
       }
@@ -170,9 +229,36 @@ export async function adminLabelRoutes(app: FastifyInstance) {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
         [storeId, productId, productName, b.labelType, b.storage, handledAt, expiresAt, b.responsible, lot, b.quantityText, b.extra, b.copies, req.admin!.userId],
       );
-      await audit(db, actor(req), 'label.print', 'label_print', r.rows[0].id, { product: productName, lot, copies: b.copies });
-      return { print: printRow({ ...r.rows[0], printed_by_name: req.admin!.name }) };
+      let jobId: string | null = null;
+      if (b.target !== 'browser') {
+        jobId = (await createLabelPrintJob(db, storeId, labelForAgent(r.rows[0], productNotes), b.copies, req.admin!.userId, b.target === 'tspl' ? 'tspl' : 'escpos')).id;
+        await db.query('UPDATE label_prints SET print_job_id = $2 WHERE id = $1', [r.rows[0].id, jobId]);
+      }
+      await audit(db, actor(req), 'label.print', 'label_print', r.rows[0].id, { product: productName, lot, copies: b.copies, target: b.target });
+      return { print: printRow({ ...r.rows[0], printed_by_name: req.admin!.name }), jobId };
     });
+    if (out.jobId) emitStoreEvent(storeId, { type: 'print.queued', jobId: out.jobId });
+    return out;
+  });
+
+  // Reimpressão pela Epson (agente), mesmo lote. Pelo navegador a reimpressão não passa pelo servidor.
+  app.post<{ Params: { id: string } }>('/labels/prints/:id/agent', async (req) => {
+    const id = parse(uuid, req.params.id);
+    const b = parse(z.object({ copies: z.number().int().min(1).max(50).default(1), mode: z.enum(['escpos', 'tspl']).default('escpos') }), req.body ?? {});
+    const storeId = req.admin!.storeId;
+    const jobId = await tx(async (db) => {
+      const r = (await db.query(
+        `SELECT lp.*, coalesce(p.notes, '') AS product_notes FROM label_prints lp LEFT JOIN label_products p ON p.id = lp.product_id
+          WHERE lp.id = $1 AND lp.store_id = $2`,
+        [id, storeId],
+      )).rows[0];
+      if (!r) throw notFound('Etiqueta');
+      const job = await createLabelPrintJob(db, storeId, labelForAgent(r, r.product_notes), b.copies, req.admin!.userId, b.mode);
+      await audit(db, actor(req), 'label.reprint', 'label_print', id, { lot: r.lot, copies: b.copies });
+      return job.id;
+    });
+    emitStoreEvent(storeId, { type: 'print.queued', jobId });
+    return { jobId };
   });
 
   // Histórico e controle de vencimento. status=active mostra o que ainda está no estoque, do que vence antes.

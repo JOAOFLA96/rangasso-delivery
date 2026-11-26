@@ -25,7 +25,7 @@ export async function adminPrinterRoutes(app: FastifyInstance) {
     );
     const queue = await pool.query(
       `SELECT j.id, j.kind, j.reprint_number, j.status, j.attempts, j.max_attempts, j.next_attempt_at, j.last_error, j.created_at,
-              o.number AS order_number, o.id AS order_id
+              o.number AS order_number, o.id AS order_id, j.payload->'label'->>'lot' AS label_lot, j.payload->'label'->>'productName' AS label_product
          FROM print_jobs j LEFT JOIN orders o ON o.id = j.order_id
         WHERE j.store_id = $1 AND (j.status IN ('pending','claimed','sending','failed','uncertain') OR j.created_at > now() - interval '12 hours')
         ORDER BY j.created_at DESC LIMIT 100`,

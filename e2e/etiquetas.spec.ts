@@ -14,6 +14,9 @@ async function login(page: Page) {
 
 test.beforeEach(async () => {
   await db.query(`DELETE FROM label_prints`);
+  await db.query(`DELETE FROM print_job_events WHERE job_id IN (SELECT id FROM print_jobs WHERE kind = 'label')`);
+  await db.query(`DELETE FROM print_jobs WHERE kind = 'label'`);
+  await db.query(`UPDATE store_settings SET label_printer_name = '', label_device_id = NULL, label_speed = 2, label_density = 10`);
   await db.query(`DELETE FROM label_products`);
 });
 
@@ -43,6 +46,7 @@ test('etiquetas: cadastra prazo, imprime 50x30 mm com lote e dá baixa no vencim
   await expect(page.locator('.lbl-computed')).toContainText('(3 dias)');
   await page.getByRole('button', { name: 'Mais' }).click();
   await page.getByRole('button', { name: 'Mais' }).click();
+  await page.getByRole('button', { name: 'Impressora de etiqueta (navegador)' }).click();
   await page.getByRole('button', { name: 'Imprimir 3 etiquetas' }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__prints)).toBe(1);
 
@@ -73,4 +77,71 @@ test('etiquetas: cadastra prazo, imprime 50x30 mm com lote e dá baixa no vencim
   await page.getByRole('button', { name: 'Dar baixa' }).click();
   await expect(page.getByText('Nenhuma etiqueta ativa')).toBeVisible();
   expect((await db.query(`SELECT status FROM label_prints`)).rows[0].status).toBe('used');
+});
+
+test('etiquetas pela Epson do caixa: vai para a fila do agente, sem abrir a impressão do navegador', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).__prints = 0;
+    window.print = () => { (window as any).__prints++; };
+  });
+  await login(page);
+  await page.goto('/admin/etiquetas/imprimir');
+  await page.getByLabel('Nome do produto').fill('Cebola caramelizada');
+  await page.locator('input[type="datetime-local"]').nth(1).fill('2030-01-10T10:00');
+  await page.getByRole('button', { name: 'Epson do caixa (bobina)' }).click();
+  await page.getByRole('button', { name: 'Mais' }).click();
+  await page.getByRole('button', { name: 'Imprimir 2 etiquetas' }).click();
+  await expect(page.getByText(/enviado para a Epson/)).toBeVisible();
+  const job = (await db.query(`SELECT kind, copies, payload FROM print_jobs WHERE kind = 'label'`)).rows[0];
+  expect(job).toMatchObject({ kind: 'label', copies: 2 });
+  expect(job.payload.label.productName).toBe('Cebola caramelizada');
+  expect(await page.evaluate(() => (window as any).__prints)).toBe(0);
+});
+
+test('teste de alinhamento: 5 etiquetas e correção do avanço muda a altura da página', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.print = () => {};
+    localStorage.setItem('rg_label_print_prefs', JSON.stringify({ mode: 'gap', gapMm: 4, marginMm: 1.5, offsetXmm: 0, offsetYmm: 0, pitchAdjustMm: -0.5 }));
+  });
+  await login(page);
+  await page.goto('/admin/etiquetas/ajustes');
+  await expect(page.getByText('29,5 mm')).toBeVisible();
+  await page.getByRole('button', { name: 'Imprimir teste (5 etiquetas)' }).click();
+  await expect(page.locator('#label-page-style')).toHaveCount(1);
+  await page.evaluate(() => document.body.classList.add('printing-labels'));
+  const text = (await page.pdf({ preferCSSPageSize: true, printBackground: true })).toString('latin1');
+  expect((text.match(/\/Type\s*\/Page[^s]/g) ?? []).length).toBe(5);
+  const box = text.match(/\/MediaBox\s*\[\s*0 0 ([\d.]+) ([\d.]+)\s*\]/);
+  // 29,5 mm = 83,6 pt.
+  expect(Math.round(Number(box![2]))).toBe(84);
+});
+
+test('impressora de etiquetas direto (TSPL): configura em Ajustes e a etiqueta vai para a fila com velocidade e densidade', async ({ page }) => {
+  await login(page);
+  await page.goto('/admin/etiquetas/imprimir');
+  await page.getByLabel('Nome do produto').fill('Coxinha frango 6 und');
+  await page.locator('input[type="datetime-local"]').nth(1).fill('2030-01-10T10:00');
+  await page.getByRole('button', { name: 'Impressora de etiqueta (direto)' }).click();
+  await page.getByRole('button', { name: 'Imprimir 1 etiqueta' }).click();
+  await expect(page.getByText(/Configure a impressora de etiquetas/)).toBeVisible();
+
+  await page.goto('/admin/etiquetas/ajustes');
+  await page.getByLabel('Nome da impressora no Windows').fill('OIA-B381');
+  await page.getByLabel('Velocidade (menor = mais nítida)').selectOption('2');
+  await page.getByLabel('Densidade (maior = mais escura)').selectOption('12');
+  await page.getByRole('button', { name: 'Salvar', exact: true }).click();
+  await expect(page.getByText('Impressora de etiquetas salva')).toBeVisible();
+  await page.getByRole('button', { name: 'Salvar e imprimir teste (3)' }).click();
+  await expect(page.getByText(/Teste enviado/)).toBeVisible();
+
+  await page.goto('/admin/etiquetas/imprimir');
+  await page.getByLabel('Nome do produto').fill('Coxinha frango 6 und');
+  await page.locator('input[type="datetime-local"]').nth(1).fill('2030-01-10T10:00');
+  await page.getByRole('button', { name: 'Imprimir 1 etiqueta' }).click();
+  await expect(page.getByText(/enviado para a impressora de etiquetas/)).toBeVisible();
+  const jobs = (await db.query(`SELECT copies, payload FROM print_jobs WHERE kind = 'label' ORDER BY created_at`)).rows;
+  expect(jobs).toHaveLength(2);
+  expect(jobs[0].payload.calibration).toBe(true);
+  expect(jobs[1].payload.tspl).toMatchObject({ printerName: 'OIA-B381', speed: 2, density: 12, gapMm: 4, widthMm: 50, heightMm: 30 });
+  expect(jobs[1].payload.label.productName).toBe('Coxinha frango 6 und');
 });

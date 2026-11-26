@@ -8,6 +8,7 @@ import { NetworkPrinter } from './printers/network.js';
 import { PrinterError, type Printer, type PrinterStatus } from './printers/types.js';
 import { WindowsPrinter } from './printers/windows.js';
 import { renderEscPos, type ReceiptPayload } from './receipt.js';
+import { renderTspl } from './tspl.js';
 
 // Laço principal do agente:
 //  1. Ao iniciar, tudo que estava "imprimindo" quando o agente parou vira "incerto" (nunca reimprime sozinho).
@@ -27,6 +28,8 @@ const LONG_POLL_SECONDS = 25;
 export interface AgentOptions {
   api?: AgentApi;
   printerFactory?: (cfg: AgentConfig, server: ServerPrinterConfig | null) => Printer;
+  // Impressora de etiquetas (TSPL) indicada no painel pelo nome no Windows.
+  labelPrinterFactory?: (windowsName: string) => Printer;
   heartbeatMs?: number;
   longPollSeconds?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -228,7 +231,7 @@ export class Agent {
 
   async handleJob(job: ServerJob) {
     const key = `${job.id}@${job.claimId}`;
-    const label = job.kind === 'test' ? `teste ${job.id.slice(0, 8)}` : `pedido #${job.payload?.order?.number ?? '?'}${job.kind === 'reprint' ? ` (reimpressão ${job.reprintNumber})` : ''}`;
+    const label = job.kind === 'label' ? `etiqueta ${job.payload?.label?.lot ?? job.id.slice(0, 8)}` : job.kind === 'test' ? `teste ${job.id.slice(0, 8)}` : `pedido #${job.payload?.order?.number ?? '?'}${job.kind === 'reprint' ? ` (reimpressão ${job.reprintNumber})` : ''}`;
     const prev = this.journal.get(key);
     if (prev) {
       // Mesmo trabalho e mesma reserva já tratados: nunca imprimir de novo, só reenviar o resultado.
@@ -240,9 +243,17 @@ export class Agent {
     let printer: Printer;
     let data: Buffer;
     try {
-      printer = this.resolvePrinter();
-      const payload: ReceiptPayload = { ...job.payload, columns: this.cfg.printer.columns || job.payload?.columns || this.columns() };
-      data = renderEscPos(payload, { kind: job.kind, reprintNumber: job.reprintNumber, copies: job.copies });
+      if (job.kind === 'label' && job.payload?.tspl) {
+        // Etiqueta em TSPL: vai para a impressora de etiquetas (USB) indicada no painel, não para a Epson.
+        const name = String(job.payload.tspl.printerName ?? '');
+        if (!name) throw new PrinterError('Painel: informe o nome da impressora de etiquetas no Windows (Etiquetas › Ajustes).');
+        printer = (this.opts.labelPrinterFactory ?? ((n: string) => new WindowsPrinter(n, path.join(this.cfg.dataDir, 'tmp'))))(name);
+        data = renderTspl(job.payload, job.copies);
+      } else {
+        printer = this.resolvePrinter();
+        const payload: ReceiptPayload = { ...job.payload, columns: this.cfg.printer.columns || job.payload?.columns || this.columns() };
+        data = renderEscPos(payload, { kind: job.kind, reprintNumber: job.reprintNumber, copies: job.copies });
+      }
     } catch (e) {
       this.log.error(`Não foi possível preparar ${label}.`, e);
       await this.report(job.id, 'failed', (e as Error).message);

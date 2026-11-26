@@ -11,7 +11,7 @@ interface Device {
   agent_version: string | null; printer_state: { mode?: string; target?: string; online?: boolean | null; paperOut?: boolean | null; coverOpen?: boolean | null; error?: string | null; localQueue?: number; checkedAt?: string };
   last_error: string | null; last_error_at: string | null; online: boolean;
 }
-interface QueueJob { id: string; kind: string; reprint_number: number; status: PrintStatus; attempts: number; max_attempts: number; last_error: string | null; created_at: string; order_number: number | null }
+interface QueueJob { id: string; kind: string; reprint_number: number; status: PrintStatus; attempts: number; max_attempts: number; last_error: string | null; created_at: string; order_number: number | null; label_lot?: string | null; label_product?: string | null }
 
 export function PrinterSettings() {
   const { user } = useSession();
@@ -97,7 +97,7 @@ export function PrinterSettings() {
           <tbody>
             {status?.queue.map((j) => (
               <tr key={j.id}>
-                <td>{j.kind === 'test' ? 'Teste' : `#${j.order_number}${j.kind === 'reprint' ? ` (reimpressão ${j.reprint_number})` : ''}`}</td>
+                <td>{j.kind === 'label' ? (j.label_lot ? `Etiqueta ${j.label_product ?? ''} (${j.label_lot})` : 'Etiqueta (teste)') : j.kind === 'test' ? 'Teste' : `#${j.order_number}${j.kind === 'reprint' ? ` (reimpressão ${j.reprint_number})` : ''}`}</td>
                 <td>{formatDateTime(j.created_at)}</td>
                 <td><span className={`pill pill-sm ${PRINT[j.status].cls}`}>{PRINT[j.status].label}</span>{j.last_error && j.status !== 'printed' && <div className="field-error small">{j.last_error}</div>}</td>
                 <td>{j.attempts}/{j.max_attempts}</td>

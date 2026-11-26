@@ -77,4 +77,4 @@ export class AgentApi {
 }
 
 export interface ServerPrinterConfig { connection: 'usb' | 'network' | 'serial'; host: string; port: number; windowsName: string; columns: number; model: string }
-export interface ServerJob { id: string; claimId: string; kind: 'original' | 'reprint' | 'test'; reprintNumber: number; copies: number; attempt: number; payload: any; createdAt: string }
+export interface ServerJob { id: string; claimId: string; kind: 'original' | 'reprint' | 'test' | 'label'; reprintNumber: number; copies: number; attempt: number; payload: any; createdAt: string }

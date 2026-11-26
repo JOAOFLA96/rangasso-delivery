@@ -117,3 +117,39 @@ describe('ESC/POS', () => {
     expect(txt).toContain('0123456789'.repeat(5).slice(0, 42));
   });
 });
+
+describe('etiqueta de validade na bobina', () => {
+  const labelPayload = (columns = 48): ReceiptPayload => ({
+    store: { name: 'Rangasso', timezone: 'America/Sao_Paulo' },
+    columns,
+    label: {
+      productName: 'Frango desfiado', labelType: 'handled', storage: 'chilled',
+      handledAt: '2026-11-04T13:30:00.000Z', expiresAt: '2026-11-07T13:30:00.000Z',
+      responsible: 'Carlos', lot: '261104-003', quantityText: '2 kg', extra: '', notes: 'Manter até 4 °C',
+    },
+  });
+
+  it('mostra produto, manipulação, validade com dia da semana no fuso da loja, responsável e lote', () => {
+    const txt = renderText(labelPayload(), { kind: 'label', reprintNumber: 0, copies: 1 });
+    expect(txt).toContain('FRANGO DESFIADO');
+    expect(txt).toContain('MANIPULADO - RESFRIADO (ATÉ 5°C)');
+    expect(txt).toContain('MANIPULAÇÃO: 04/11/26 10:30');
+    expect(txt).toContain('VAL: SÁB 07/11/26 10:30');
+    expect(txt).toMatch(/RESP\.: Carlos\s+LOTE: 261104-003/);
+    expect(txt).toContain('2 kg - Manter até 4 °C');
+    for (const w of [32, 42, 48]) {
+      for (const l of renderText(labelPayload(w), { kind: 'label', reprintNumber: 0, copies: 1 }).split('\n')) {
+        if (!l.includes('(corte)')) expect(l.length, l).toBeLessThanOrEqual(w);
+      }
+    }
+  });
+
+  it('corta cada cópia (até 50) e codifica acentos e grau na CP860', () => {
+    const bytes = renderEscPos(labelPayload(), { kind: 'label', reprintNumber: 0, copies: 12 });
+    const cuts = bytes.toString('latin1').split('\x1dVB').length - 1;
+    expect(cuts).toBe(12);
+    expect(bytes.includes(iconv.encode('ATÉ 5°C', 'cp860'))).toBe(true);
+    const many = renderEscPos(labelPayload(), { kind: 'label', reprintNumber: 0, copies: 80 });
+    expect(many.toString('latin1').split('\x1dVB').length - 1).toBe(50);
+  });
+});
