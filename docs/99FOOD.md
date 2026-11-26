@@ -28,7 +28,7 @@ no 99 assim que chegam. Usa a Plataforma Aberta do 99Food ("99Food Protocol").
 | --- | --- |
 | Pedido novo no 99 | Grava o pedido, põe na fila de impressão e aceita no 99 (prazo do 99: 5 minutos) |
 | Aceite automático falha | Pedido fica em "Recebido" com aviso no histórico; o botão **Confirmar pedido** tenta de novo |
-| Painel: Saiu para entrega | Avisa o 99 que está pronto e, se a entrega é da loja, que saiu (o entregador vai como a loja: nome e telefone de Configurações › Dados da loja) |
+| Painel: Saiu para entrega | Avisa o 99 que está pronto e, se a entrega é da loja, que saiu. Pela aba Entregas, vai o nome e telefone do motoboy da saída; sem saída, vai o nome e telefone da loja |
 | Painel: Concluir | Entrega da loja: avisa o 99 que foi entregue |
 | Painel: Cancelar | Cancela no 99 com o motivo digitado. Se o 99 recusar, nada muda no painel |
 | Cancelado/concluído no 99 | O painel acompanha sozinho |
