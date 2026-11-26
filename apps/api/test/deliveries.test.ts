@@ -128,6 +128,9 @@ describe('saídas para entrega', () => {
     expect(sum.couriers[0].avg_ride_min).toBe(0);
     const day = (await call('GET', `/delivery-runs?date=${today}`, staff)).json().runs;
     expect(day).toMatchObject([{ number: 1, status: 'done' }]);
+    expect((await call('GET', `/delivery-runs?from=${today}&to=${today}&courierId=${c}`, staff)).json().runs).toHaveLength(1);
+    const other = await courier('Outro');
+    expect((await call('GET', `/delivery-runs?from=${today}&to=${today}&courierId=${other}`, staff)).json().runs).toEqual([]);
   });
 
   it('reordenar no painel mede sem otimizar; desfazer libera os pedidos', async () => {

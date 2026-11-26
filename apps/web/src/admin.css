@@ -251,6 +251,13 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
 .dl-courier-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
 .dl-courier-form .field { margin: 0; }
 .dl-total td { font-weight: 800; }
+.dl-row-sel td { background: var(--brand-soft); }
+.dl-hist-head { margin-top: 14px; }
+.dl-hist { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 10px; }
+.dl-hist > li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.dl-hist-run { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; }
+.dl-hist-stops { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+.dl-hist-stops li { display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }
 @media (max-width: 640px) {
   .dl-main { padding: 10px; }
   .dl-stop { grid-template-columns: 28px 1fr; }

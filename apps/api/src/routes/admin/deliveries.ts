@@ -61,12 +61,16 @@ export async function adminDeliveryRoutes(app: FastifyInstance) {
 
   // ---- Saídas ----
   app.get('/delivery-runs', async (req) => {
-    const q = parse(z.object({ date: day.optional() }), req.query);
+    const q = parse(z.object({ date: day.optional(), from: day.optional(), to: day.optional(), courierId: uuid.optional() }), req.query);
     const storeId = req.admin!.storeId;
-    // Sem data: as saídas em andamento. Com data: todas as criadas naquele dia (fuso da loja).
-    const runs = q.date
-      ? await listRuns(pool, storeId, `(r.created_at AT TIME ZONE (SELECT timezone FROM store_settings WHERE store_id = $1))::date = $2::date`, [q.date])
-      : await listRuns(pool, storeId, ACTIVE_RUNS_WHERE, []);
+    const from = q.from ?? q.date;
+    const to = q.to ?? q.date ?? q.from;
+    // Sem data: as saídas em andamento. Com período: as que saíram nesse período (fuso da loja), para o histórico por motoboy.
+    let runs;
+    if (from && to) {
+      const local = `((r.departed_at AT TIME ZONE (SELECT timezone FROM store_settings WHERE store_id = $1))::date)`;
+      runs = await listRuns(pool, storeId, `r.departed_at IS NOT NULL AND ${local} BETWEEN $2::date AND $3::date AND ($4::uuid IS NULL OR r.courier_id = $4)`, [from, to, q.courierId ?? null]);
+    } else runs = await listRuns(pool, storeId, ACTIVE_RUNS_WHERE, []);
     return { runs };
   });
 
