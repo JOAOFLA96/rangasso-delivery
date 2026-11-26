@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, brl, formatTime, maskPhone } from '../lib/api';
+import { api, brl, formatDateTime, formatTime, maskPhone } from '../lib/api';
 import { PAYMENT, STATUS, fmtPhone, type Status } from './labels';
 import { useLiveEvents } from './live';
 import { canManage, useSession } from './session';
@@ -72,6 +72,7 @@ export function DeliveriesTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCouriers, setShowCouriers] = useState(false);
+  const [version, setVersion] = useState(0);
   const [notDelivered, setNotDelivered] = useState<{ run: Run; stop: Stop } | null>(null);
 
   const load = useCallback(async () => {
@@ -86,6 +87,7 @@ export function DeliveriesTab() {
       setMaxStops(a.maxStops);
       setRuns(r.runs);
       setCouriers(c.couriers);
+      setVersion((v) => v + 1);
       setPicked((p) => new Set([...p].filter((id) => a.orders.some((o) => o.id === id))));
       setError(null);
     } catch (e) {
@@ -206,7 +208,7 @@ export function DeliveriesTab() {
         />
       ))}
 
-      <Summary />
+      <Summary version={version} />
 
       {showCouriers && <CouriersModal couriers={couriers} onClose={() => setShowCouriers(false)} onChanged={load} />}
       {notDelivered && (
@@ -316,14 +318,20 @@ function RunCard({ run, couriers, busy, picked, onCourier, onMove, onRemove, onA
   );
 }
 
-function Summary() {
+function Summary({ version }: { version: number }) {
   const [from, setFrom] = useState(today());
   const [to, setTo] = useState(today());
   const [rows, setRows] = useState<SummaryRow[] | null>(null);
+  const [history, setHistory] = useState<Run[]>([]);
+  const [courier, setCourier] = useState('');
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    api<{ couriers: SummaryRow[] }>(`/api/admin/delivery-runs/summary?from=${from}&to=${to}`).then((r) => { setRows(r.couriers); setErr(null); }).catch((e) => setErr(errorText(e)));
-  }, [from, to]);
+    const c = courier ? `&courierId=${courier}` : '';
+    Promise.all([
+      api<{ couriers: SummaryRow[] }>(`/api/admin/delivery-runs/summary?from=${from}&to=${to}`),
+      api<{ runs: Run[] }>(`/api/admin/delivery-runs?from=${from}&to=${to}${c}`),
+    ]).then(([s, h]) => { setRows(s.couriers); setHistory(h.runs); setErr(null); }).catch((e) => setErr(errorText(e)));
+  }, [from, to, courier, version]);
   const tot = rows?.reduce((a, r) => ({ d: a.d + r.delivered, n: a.n + r.not_delivered, f: a.f + r.delivery_fees_cents, m: a.m + r.planned_distance_m }), { d: 0, n: 0, f: 0, m: 0 });
   return (
     <section className="card dl-summary">
@@ -341,8 +349,8 @@ function Summary() {
           <thead><tr><th>Motoboy</th><th>Saídas</th><th>Entregues</th><th>Não entregues</th><th>Taxas de entrega</th><th>Km previstos</th><th>Saída → entrega</th><th>Pedido → entrega</th><th>Volta média</th></tr></thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.courier_id ?? 'none'}>
-                <td>{r.courier_name}</td><td>{r.runs}</td><td>{r.delivered}</td><td>{r.not_delivered}</td><td>{brl(r.delivery_fees_cents)}</td>
+              <tr key={r.courier_id ?? 'none'} className={courier && courier === r.courier_id ? 'dl-row-sel' : ''}>
+                <td><button className="btn btn-link" onClick={() => setCourier(courier === r.courier_id ? '' : r.courier_id ?? '')} title="Ver as entregas deste motoboy">{r.courier_name}</button></td><td>{r.runs}</td><td>{r.delivered}</td><td>{r.not_delivered}</td><td>{brl(r.delivery_fees_cents)}</td>
                 <td>{km(r.planned_distance_m || null)}</td><td>{r.avg_ride_min != null ? `${r.avg_ride_min} min` : '—'}</td>
                 <td>{r.avg_total_min != null ? `${r.avg_total_min} min` : '—'}</td><td>{r.avg_cycle_min != null ? `${r.avg_cycle_min} min` : '—'}</td>
               </tr>
@@ -351,6 +359,37 @@ function Summary() {
           </tbody>
         </table></div>
       )}
+      <div className="a-block-head dl-hist-head">
+        <h3>Entregas de cada saída</h3>
+        {courier && <button className="btn btn-ghost btn-sm" onClick={() => setCourier('')}>Ver todos os motoboys</button>}
+      </div>
+      {!history.length && <p className="muted">Nenhuma saída no período{courier ? ' para este motoboy' : ''}.</p>}
+      <ul className="dl-hist">
+        {history.map((r) => (
+          <li key={r.id}>
+            <div className="dl-hist-run">
+              <strong>Saída #{r.number} · {r.courierName ?? 'Sem motoboy'}</strong>
+              <span className="muted small">
+                {r.departedAt && `${formatDateTime(r.departedAt)}`}
+                {r.finishedAt && r.departedAt ? ` → voltou ${formatTime(r.finishedAt)} (${Math.round((+new Date(r.finishedAt) - +new Date(r.departedAt)) / 60000)} min)` : r.status === 'out' ? ' · na rua' : ''}
+                {r.totalDistanceM != null ? ` · ${km(r.totalDistanceM)}` : ''}
+              </span>
+            </div>
+            <ol className="dl-hist-stops">
+              {r.stops.map((s) => (
+                <li key={s.orderId}>
+                  <span>#{s.number} · {s.customerName} · {s.neighborhood}</span>
+                  {s.outcome === 'delivered' ? (
+                    <span className="pill pill-sm s-done">Entregue {s.outcomeAt ? formatTime(s.outcomeAt) : ''}{s.outcomeAt && r.departedAt ? ` · ${Math.round((+new Date(s.outcomeAt) - +new Date(r.departedAt)) / 60000)} min após sair` : ''}</span>
+                  ) : s.outcome === 'not_delivered' ? (
+                    <span className="pill pill-sm s-cancelled">Não entregue: {s.outcomeNote}</span>
+                  ) : <span className="pill pill-sm s-out">A caminho</span>}
+                </li>
+              ))}
+            </ol>
+          </li>
+        ))}
+      </ul>
       <p className="muted small">“Saída → entrega” e “Pedido → entrega” são médias dos pedidos entregues, medidas pelo horário em que o painel registrou cada baixa. “Volta média” é da saída até o motoboy voltar. Km previstos vêm da rota do Google (ida e volta), não do odômetro.</p>
     </section>
   );
