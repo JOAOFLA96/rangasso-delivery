@@ -136,8 +136,17 @@ O prazo deve ser definido pelo responsável da loja (com o contador). Ele deve c
 
 ## Alternativa: hospedagem gerenciada (Render ou Railway)
 
+### Banco no Neon (grátis, não expira)
+
+1. Crie a conta em neon.tech e um projeto na região **AWS US West 2 (Oregon)** (mesma do Render).
+2. Em **Connect**, desligue **Connection pooling** e copie o endereço `postgresql://...` (sem `-pooler`: a migração usa trava de sessão, que não funciona pelo pooler).
+3. No Render, em **Environment**, cole em `DATABASE_URL` e salve. O site aplica as migrações sozinho no próximo start.
+4. Com o banco vazio, o primeiro usuário dono é criado a partir de `INITIAL_ADMIN_EMAIL` e `INITIAL_ADMIN_PASSWORD`.
+
+O Neon grátis adormece o banco após alguns minutos sem uso; a primeira consulta depois disso demora um pouco mais.
+
 Para testar sem servidor próprio, o repositório traz `render.yaml` (Render) e `railway.json` (Railway). Os dois usam o mesmo `Dockerfile`.
 
 - O endereço público é detectado sozinho (`RENDER_EXTERNAL_URL` ou `RAILWAY_PUBLIC_DOMAIN`), sem precisar definir `PUBLIC_URL`.
 - Sem terminal na hospedagem, o primeiro usuário é criado pelas variáveis `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD` (e `INITIAL_ADMIN_NAME`). Elas só têm efeito enquanto a loja não tem nenhum usuário. Depois do primeiro login, troque a senha no painel e apague `INITIAL_ADMIN_PASSWORD`.
-- **Plano grátis do Render (só para teste):** o site dorme após 15 minutos sem acesso e leva uns 30 segundos para acordar; o disco é temporário, então fotos enviadas pelo painel somem quando o serviço reinicia; o banco grátis expira. Para operar de verdade, use plano pago com disco persistente ou a VPS acima.
+- **Plano grátis do Render (só para teste):** o site dorme após 15 minutos sem acesso e leva uns 30 segundos para acordar; o disco é temporário, então fotos enviadas pelo painel somem quando o serviço reinicia; o Postgres grátis do Render expira em ~30 dias e apaga os dados, por isso o `render.yaml` usa um banco externo. Para operar de verdade, use plano pago com disco persistente ou a VPS acima.

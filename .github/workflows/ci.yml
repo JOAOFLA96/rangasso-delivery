@@ -7,7 +7,6 @@ on:
 
 jobs:
   test:
-    # ubuntu-latest passou a ser 26.04, que o Playwright 1.56 ainda não suporta (navegador não instala).
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -135,7 +134,7 @@ jobs:
           Pop-Location
 
   deploy-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Imagem Docker de produção
