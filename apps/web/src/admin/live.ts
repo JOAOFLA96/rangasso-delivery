@@ -15,7 +15,7 @@ export function useLiveEvents(onEvent: (type: string, data: any) => void, onSync
     let es: EventSource | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
-    const types = ['order.created', 'order.updated', 'print.updated', 'print.queued', 'agent.updated'];
+    const types = ['order.created', 'order.updated', 'print.updated', 'print.queued', 'agent.updated', 'run.updated'];
 
     function connect() {
       es = new EventSource('/api/admin/events');

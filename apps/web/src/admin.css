@@ -219,3 +219,43 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
   .lbl-page { width: 50mm; overflow: hidden; break-after: page; page-break-after: always; }
   .lbl-page:last-child { break-after: auto; page-break-after: auto; }
 }
+
+/* Entregas e rotas dos motoboys */
+.dl-main { max-width: 980px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+.dl-main > * { min-width: 0; }
+.dl-main h2, .dl-h { margin: 0; }
+.dl-main .a-block-head { flex-wrap: wrap; }
+.dl-table-wrap { overflow-x: auto; }
+.dl-h { font-size: 1.05rem; margin-top: 6px; }
+.dl-main .card { padding: 14px 16px; }
+.dl-main .card h3 { margin: 0; font-size: 1rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dl-list, .dl-stops { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 8px; }
+.dl-order { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; background: #fff; }
+.dl-order.sel { border-color: var(--ink); box-shadow: var(--shadow); }
+.dl-order input { width: 22px; height: 22px; margin-top: 2px; flex: none; }
+.dl-order-main { display: grid; gap: 2px; min-width: 0; }
+.dl-retry { background: var(--warn-soft); color: var(--warn); }
+.dl-create { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.dl-create .field { margin: 0; min-width: 200px; flex: 1; }
+.dl-run { border-left: 5px solid #d9d3ce; }
+.dl-run.out { border-left-color: var(--info); }
+.dl-warn { color: var(--warn); }
+.dl-stop { display: grid; grid-template-columns: 32px 1fr auto; gap: 10px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.dl-stop.delivered { background: var(--ok-soft); }
+.dl-stop.not_delivered, .dl-stop.cancelled { background: #f6f4f2; color: var(--muted); }
+.dl-pos { width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: #fff; display: grid; place-items: center; font-weight: 800; }
+.dl-stop-main { display: grid; gap: 3px; min-width: 0; }
+.dl-stop-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.dl-run-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.dl-run-actions .btn { text-decoration: none; }
+.dl-courier-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+.dl-courier-form .field { margin: 0; }
+.dl-total td { font-weight: 800; }
+@media (max-width: 640px) {
+  .dl-main { padding: 10px; }
+  .dl-stop { grid-template-columns: 28px 1fr; }
+  .dl-stop-actions { grid-column: 1 / -1; justify-content: stretch; }
+  .dl-stop-actions .btn { flex: 1; }
+  .dl-courier-form { grid-template-columns: 1fr; }
+  .dl-run-actions .btn { flex: 1 1 45%; }
+}
