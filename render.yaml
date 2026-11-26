@@ -1,13 +1,9 @@
-# Blueprint do Render (plano grátis, para teste). Cria o banco PostgreSQL e o site a partir do Dockerfile.
-# Limitações do plano grátis: o site "dorme" após 15 min sem acesso (~30 s para acordar), o disco é
-# temporário (fotos enviadas pelo painel somem quando o serviço reinicia) e o banco grátis expira.
+# Blueprint do Render (plano grátis, para teste). Cria o site a partir do Dockerfile.
+# O banco fica fora do Render: o Postgres grátis do Render expira em ~30 dias e apaga os dados.
+# Use um Postgres externo (ex.: Neon grátis, conexão direta, sem "-pooler") e cole o endereço em DATABASE_URL.
+# Limitações do plano grátis: o site "dorme" após 15 min sem acesso (~30 s para acordar) e o disco é
+# temporário (fotos enviadas pelo painel somem quando o serviço reinicia).
 # Para operar de verdade, use um plano pago ou a implantação em VPS (docs/IMPLANTACAO.md).
-databases:
-  - name: rangasso-db
-    plan: free
-    databaseName: rangasso
-    user: rangasso
-
 services:
   - type: web
     name: rangasso
@@ -16,10 +12,9 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     envVars:
+      # Endereço do Postgres externo (postgresql://...?sslmode=require). Preenchido no painel do Render.
       - key: DATABASE_URL
-        fromDatabase:
-          name: rangasso-db
-          property: connectionString
+        sync: false
       - key: IP_HASH_SECRET
         generateValue: true
       - key: INITIAL_ADMIN_EMAIL
