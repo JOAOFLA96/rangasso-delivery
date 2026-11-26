@@ -2,7 +2,13 @@ import pg from 'pg';
 import { config } from '../config.js';
 
 // Retorna bigint/numeric como string por padrão; contagens são convertidas onde usadas.
-export const pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: 10 });
+export const pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: 10, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 30_000 });
+
+// Bancos que "adormecem" (Neon grátis) ou reiniciam derrubam conexões paradas no pool. Sem este tratamento,
+// o erro de uma conexão ociosa derruba o servidor inteiro; com ele, a conexão é descartada e a próxima consulta abre outra.
+pool.on('error', (err) => {
+  console.error(`conexão ociosa com o banco encerrada: ${err.message}`);
+});
 
 export type Db = pg.Pool | pg.PoolClient;
 
