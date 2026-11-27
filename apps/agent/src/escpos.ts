@@ -63,6 +63,18 @@ export class EscPos {
     return this.raw([ESC, 0x64, Math.max(0, Math.min(255, lines))]);
   }
 
+  // QR Code nativo da impressora (GS ( k, modelo 2), centralizado pela linha anterior.
+  qr(data: string, moduleSize = 6) {
+    const bytes = Buffer.from(data, 'ascii');
+    const len = bytes.length + 3;
+    this.raw([GS, 0x28, 0x6b, 4, 0, 0x31, 0x41, 0x32, 0]); // modelo 2
+    this.raw([GS, 0x28, 0x6b, 3, 0, 0x31, 0x43, Math.max(1, Math.min(16, moduleSize))]); // tamanho do módulo
+    this.raw([GS, 0x28, 0x6b, 3, 0, 0x31, 0x45, 0x31]); // correção de erro M
+    this.raw([GS, 0x28, 0x6b, len & 0xff, (len >> 8) & 0xff, 0x31, 0x50, 0x30]).raw(bytes); // guarda os dados
+    this.raw([GS, 0x28, 0x6b, 3, 0, 0x31, 0x51, 0x30]); // imprime
+    return this.raw([0x0a]);
+  }
+
   // Avança o papel e faz corte parcial (GS V 66 n).
   cut() {
     return this.raw([GS, 0x56, 66, 3]);

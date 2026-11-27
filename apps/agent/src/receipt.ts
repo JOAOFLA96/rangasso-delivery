@@ -27,6 +27,8 @@ export interface ReceiptPayload {
     paymentMethod: 'cash' | 'pix' | 'card';
     changeForCents: number | null;
   };
+  // Link que o motoboy lê com o celular para colocar o pedido na saída dele (só em pedidos de entrega).
+  courierQr?: string;
 }
 
 export interface JobMeta { kind: 'original' | 'reprint' | 'test'; reprintNumber: number; copies: number }
@@ -46,7 +48,8 @@ function fmtDate(iso: string, tz = 'America/Sao_Paulo') {
 
 type Op =
   | { t: 'line'; s: string; bold?: boolean; big?: 'wide' | 'tall'; align?: 'left' | 'center'; invert?: boolean }
-  | { t: 'feed'; n: number };
+  | { t: 'feed'; n: number }
+  | { t: 'qr'; data: string };
 
 // Descrição intermediária: gera ESC/POS e texto com o mesmo conteúdo.
 export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, printedAt = new Date()): Op[] {
@@ -118,6 +121,11 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
     for (const l of wrap(o.notes, W)) L(l, { bold: true });
   }
   L(rule(W));
+  if (p.courierQr && o.fulfillment !== 'pickup' && /^https?:\/\/[\x21-\x7e]{1,300}$/.test(p.courierQr)) {
+    L('MOTOBOY: LEIA PARA PEGAR ESTE PEDIDO', { align: 'center', bold: true });
+    ops.push({ t: 'qr', data: p.courierQr });
+    L(rule(W));
+  }
   if (p.store.footer) for (const l of wrap(p.store.footer, W)) L(l, { align: 'center' });
   L(`Impresso em ${fmtDate(printedAt.toISOString(), tz)}`, { align: 'center' });
   ops.push({ t: 'feed', n: 4 });
@@ -131,6 +139,10 @@ export function renderEscPos(p: ReceiptPayload, meta: JobMeta, printedAt = new D
     for (const op of receiptOps(p, meta, c, printedAt)) {
       if (op.t === 'feed') {
         out.feed(op.n);
+        continue;
+      }
+      if (op.t === 'qr') {
+        out.align('center').qr(op.data);
         continue;
       }
       out.align(op.align ?? 'left').bold(!!op.bold).invert(!!op.invert);
@@ -151,6 +163,10 @@ export function renderText(p: ReceiptPayload, meta: JobMeta, printedAt = new Dat
   for (let c = 1; c <= copies; c++) {
     for (const op of receiptOps(p, meta, c, printedAt)) {
       if (op.t === 'feed') continue;
+      if (op.t === 'qr') {
+        lines.push('[QR Code]'.padStart(Math.floor((W + 9) / 2)));
+        continue;
+      }
       const width = op.big === 'wide' ? Math.floor(W / 2) : W;
       const s = op.align === 'center' ? op.s.padStart(Math.floor((width + op.s.length) / 2)) : op.s;
       lines.push(s);

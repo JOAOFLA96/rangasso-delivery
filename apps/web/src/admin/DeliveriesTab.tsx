@@ -9,7 +9,7 @@ import { RUN_COLORS, RunsMap } from './RunsMap';
 // Entregas: junta pedidos numa saída do motoboy, o Google ordena as paradas (saindo e voltando à loja) e o motoboy recebe a
 // rota no celular (link do Google Maps e mensagem pronta para WhatsApp). Depois, baixa de cada entrega e resumo por motoboy.
 
-interface Courier { id: string; name: string; phone: string; active: boolean }
+interface Courier { id: string; name: string; phone: string; active: boolean; hasLink?: boolean; accessToken?: string | null }
 interface Available {
   id: string; number: number; status: Status; customer_name: string; street: string; street_number: string; complement: string; neighborhood_name: string;
   payment_method: keyof typeof PAYMENT; change_for_cents: number | null; total_cents: number; distance_km: number | null; created_at: string; failed_attempts: number;
@@ -24,6 +24,7 @@ interface Run {
   id: string; number: number; status: 'planned' | 'out' | 'done' | 'cancelled'; auto?: boolean; polyline: string | null; courierId: string | null; courierName: string | null; courierPhone: string | null;
   routeBy: 'google' | 'google_manual' | 'distance'; routeError: string | null; totalDistanceM: number | null; totalDurationS: number | null;
   createdAt: string; departedAt: string | null; finishedAt: string | null; stops: Stop[]; mapsUrl: string | null;
+  courierLocation?: { lat: number; lng: number; accuracyM: number | null; at: string } | null;
 }
 interface DispatchSettings { autoDispatch: boolean; autoDispatchMax: number; store: { lat: number; lng: number } | null }
 interface SummaryRow {
@@ -182,6 +183,7 @@ export function DeliveriesTab() {
                 {!run && <span className="pill pill-sm s-done">Livre</span>}
                 {run?.status === 'planned' && <span className="pill pill-sm s-preparing">Saída #{run.number} · {run.stops.length} entrega(s) esperando sair</span>}
                 {run?.status === 'out' && <span className="pill pill-sm s-out">Na rua desde {formatTime(run.departedAt!)} · faltam {left} de {run.stops.length}</span>}
+                {run?.status === 'out' && <span className="muted small">{run.courierLocation ? `📍 posição das ${formatTime(run.courierLocation.at)}` : '📍 sem localização (página do motoboy fechada?)'}</span>}
               </li>
             );
           })}
@@ -467,6 +469,26 @@ function CouriersModal({ couriers, onClose, onChanged }: { couriers: Courier[]; 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [edit, setEdit] = useState<Courier | null>(null);
+  const linkOf = (t: string) => `${location.origin}/motoboy/${t}`;
+  async function newLink(c: Courier) {
+    if (c.accessToken && !confirm(`Gerar um link novo para ${c.name}? O link antigo para de funcionar.`)) return;
+    try {
+      await api(`/api/admin/couriers/${c.id}/link`, { method: 'POST', body: {} });
+      toast('Link do motoboy pronto');
+      onChanged();
+    } catch (e) {
+      toast(errorText(e), 'error');
+    }
+  }
+  async function copy(c: Courier) {
+    try {
+      await navigator.clipboard.writeText(linkOf(c.accessToken!));
+      toast('Link copiado');
+    } catch {
+      toast(linkOf(c.accessToken!));
+    }
+  }
+  const waLink = (c: Courier) => `https://wa.me/55${c.phone}?text=${encodeURIComponent(`Oi, ${c.name}! Esse é o seu link de entregas do Rangasso. Abra no seu celular e salve na tela inicial: ${linkOf(c.accessToken!)}\n\nNo balcão, leia o QR do cupom para pegar o pedido. Não passe esse link para ninguém.`)}`;
   async function save(c: { id?: string; name: string; phone: string; active: boolean }) {
     try {
       await api(c.id ? `/api/admin/couriers/${c.id}` : '/api/admin/couriers', { method: c.id ? 'PUT' : 'POST', body: { name: c.name, phone: c.phone, active: c.active } });
@@ -486,6 +508,7 @@ function CouriersModal({ couriers, onClose, onChanged }: { couriers: Courier[]; 
         <button className="btn btn-primary">Adicionar</button>
       </form>
       {!couriers.length && <p className="muted">Nenhum motoboy cadastrado.</p>}
+      <p className="muted small">Cada motoboy tem um link pessoal (sem senha) com a rota dele, a baixa das entregas e o leitor do QR do cupom. Se o link vazar ou ele sair da equipe, troque o link ou desative.</p>
       <table className="a-table">
         <tbody>
           {couriers.map((c) => (
@@ -503,6 +526,15 @@ function CouriersModal({ couriers, onClose, onChanged }: { couriers: Courier[]; 
                   <td className="a-row">
                     <button className="btn btn-ghost btn-sm" onClick={() => setEdit({ ...c, phone: c.phone ? maskPhone(c.phone) : '' })}>Editar</button>
                     <button className="btn btn-ghost btn-sm" onClick={() => save({ ...c, active: !c.active })}>{c.active ? 'Desativar' : 'Ativar'}</button>
+                  </td>
+                  <td className="a-row">
+                    {c.accessToken ? (
+                      <>
+                        <button className="btn btn-secondary btn-sm" onClick={() => copy(c)}>Copiar link</button>
+                        {c.phone && <a className="btn btn-secondary btn-sm" href={waLink(c)} target="_blank" rel="noreferrer">Enviar no WhatsApp</a>}
+                        <button className="btn btn-ghost btn-sm" onClick={() => newLink(c)}>Trocar link</button>
+                      </>
+                    ) : c.hasLink ? <span className="muted">Link criado</span> : c.active && <button className="btn btn-secondary btn-sm" onClick={() => newLink(c)}>Gerar link do motoboy</button>}
                   </td>
                 </>
               )}

@@ -6,6 +6,7 @@ import { emitStoreEvent } from '../../lib/events.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { cleanText, normalizePhone } from '../../lib/text.js';
 import { parse } from '../../lib/validate.js';
+import { newToken } from '../../lib/security.js';
 import { requireRole } from '../../auth.js';
 import { notifyOrder, pushForStatus } from '../../services/push.js';
 import { tripPlannerEnabled } from '../../services/google.js';
@@ -23,8 +24,10 @@ export async function adminDeliveryRoutes(app: FastifyInstance) {
 
   // ---- Motoboys ----
   app.get('/couriers', async (req) => {
-    const r = await pool.query('SELECT id, name, phone, active FROM couriers WHERE store_id = $1 ORDER BY active DESC, lower(name)', [req.admin!.storeId]);
-    return { couriers: r.rows };
+    const r = await pool.query('SELECT id, name, phone, active, access_token FROM couriers WHERE store_id = $1 ORDER BY active DESC, lower(name)', [req.admin!.storeId]);
+    // O link pessoal do motoboy só aparece para dono e gerente (é a credencial da página dele).
+    const manager = req.admin!.role !== 'staff';
+    return { couriers: r.rows.map(({ access_token, ...c }) => ({ ...c, accessToken: manager ? access_token : undefined, hasLink: !!access_token })) };
   });
 
   const saveCourier = async (req: any, id: string | null) => {
@@ -46,6 +49,16 @@ export async function adminDeliveryRoutes(app: FastifyInstance) {
   };
   app.post('/couriers', { preHandler: requireRole('owner', 'manager') }, (req) => saveCourier(req, null));
   app.put<{ Params: { id: string } }>('/couriers/:id', { preHandler: requireRole('owner', 'manager') }, (req) => saveCourier(req, parse(uuid, req.params.id)));
+
+  // Link pessoal do motoboy (/motoboy/<token>). Gerar de novo invalida o link anterior.
+  app.post<{ Params: { id: string } }>('/couriers/:id/link', { preHandler: requireRole('owner', 'manager') }, async (req) => {
+    const id = parse(uuid, req.params.id);
+    const token = newToken(24);
+    const r = await pool.query('UPDATE couriers SET access_token = $3 WHERE id = $1 AND store_id = $2 RETURNING id', [id, req.admin!.storeId, token]);
+    if (!r.rows[0]) throw notFound('Motoboy');
+    await audit(pool, actor(req), 'courier.link', 'courier', id);
+    return { accessToken: token };
+  });
 
   // ---- Pedidos prontos para montar rota ----
   app.get('/deliveries/available', async (req) => {
