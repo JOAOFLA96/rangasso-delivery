@@ -111,9 +111,41 @@ describe('taxa por km', () => {
     let r = (await q('Cidade Inteira Rua Perto')).json();
     expect(r.error).toMatchObject({ code: 'address_not_found', details: { field: 'address.cep' } });
     expect(r.error.message).toMatch(/Confira o CEP e o número/);
+    // Google fora do ar, nada guardado e bairro sem taxa: pede para conferir.
     setGoogle(async () => { throw new Error('respondeu 403 PERMISSION_DENIED'); });
-    r = (await post(orderBody(f, { address: addr('Rua Perto') }))).json();
+    r = (await post(orderBody(f, { address: addr('Rua Perto', { neighborhoodId: undefined, neighborhoodName: 'Bairro Novo' }) }))).json();
     expect(r.error.code).toBe('address_not_found');
+  });
+
+  it('plano B: cada endereço medido fica guardado; Google fora do ar usa o endereço, o CEP ou o bairro salvo', async () => {
+    let down = false;
+    setGoogle(async (_o, dest) => {
+      if (down) throw new Error('respondeu 403 PERMISSION_DENIED');
+      return { meters: dest.includes('Rua Media') ? 4120 : 1500, start: null, end: null, types: ['street_address'], partial: false };
+    });
+    const media = (number: string, extra: Record<string, unknown> = {}) => addr('Rua Media', { cep: '13336-030', number, neighborhoodId: undefined, neighborhoodName: 'Jardim Salvo', ...extra });
+    // Pedido com o Google no ar: guarda CEP, número, rua, bairro, km e taxa. A cotação não guarda.
+    await app.inject({ method: 'POST', url: '/api/public/quote', payload: { items: orderBody(f).items, address: media('787') } });
+    expect((await pool.query('SELECT count(*)::int c FROM delivery_addresses')).rows[0].c).toBe(0);
+    expect((await post(orderBody(f, { address: media('787') }))).statusCode).toBe(201);
+    await post(orderBody(f, { address: media('787') }));
+    const row = (await pool.query('SELECT * FROM delivery_addresses')).rows[0];
+    expect(row).toMatchObject({ cep: '13336030', number: '787', street: 'Rua Media', neighborhood: 'Jardim Salvo', distance_km: '4.12', fee_cents: 800, uses: 2 });
+
+    down = true;
+    await pool.query('DELETE FROM route_cache');
+    const q = (address: any) => app.inject({ method: 'POST', url: '/api/public/quote', payload: { items: orderBody(f).items, neighborhoodId: address.neighborhoodId, neighborhoodName: address.neighborhoodName, address } });
+    // Mesmo endereço: a distância guardada.
+    expect((await q(media('787'))).json()).toMatchObject({ deliveryFeeCents: 800, deliveryDistanceKm: 4.12, deliveryDistanceBy: 'route' });
+    // Mesmo CEP, outro número: a maior distância já medida nesse CEP.
+    const res = await post(orderBody(f, { address: media('900') }));
+    expect(res.statusCode).toBe(201);
+    expect((await pool.query('SELECT delivery_fee_cents, delivery_distance_km FROM orders WHERE public_token = $1', [res.json().token])).rows[0]).toMatchObject({ delivery_fee_cents: 800 });
+    // CEP nunca medido, mas o bairro já tem taxa (salva nas entregas anteriores): usa a taxa do bairro.
+    expect((await q(addr('Rua Perto', { cep: '13340-000', neighborhoodId: undefined, neighborhoodName: 'Jardim Salvo' }))).json()).toMatchObject({ deliveryFeeCents: 800, deliveryDistanceKm: null });
+    expect((await q(addr('Rua Perto', { cep: '13340-000' }))).json()).toMatchObject({ deliveryFeeCents: 600 }); // Centro, taxa da loja
+    // Nada guardado: pede para conferir.
+    expect((await q(addr('Rua Perto', { cep: '13340-000', neighborhoodId: undefined, neighborhoodName: 'Desconhecido' }))).json().error.code).toBe('address_not_found');
   });
 
   it('valor por km: km × valor, taxa mínima e raio máximo; cliente sem escolher bairro', async () => {
