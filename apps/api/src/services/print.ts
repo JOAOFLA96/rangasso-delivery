@@ -2,6 +2,7 @@ import type { Db } from '../db/pool.js';
 import { pool } from '../db/pool.js';
 import { AppError, badRequest, notFound } from '../lib/errors.js';
 import { formatPhone } from '../lib/text.js';
+import { config } from '../config.js';
 
 export const PRINT_STATUS_LABELS: Record<string, string> = {
   not_queued: 'Aguardando impressão',
@@ -78,6 +79,8 @@ export async function buildReceiptPayload(db: Db, storeId: string, orderId: stri
         locator: o.external_info?.locator ?? null,
       } : {}),
     },
+    // QR no cupom: o motoboy lê com o celular e o pedido entra na saída dele (agente 1.6.0+).
+    ...(o.fulfillment === 'delivery' ? { courierQr: `${config.PUBLIC_URL.replace(/\/$/, '')}/motoboy/pegar/${o.id}` } : {}),
   };
 }
 

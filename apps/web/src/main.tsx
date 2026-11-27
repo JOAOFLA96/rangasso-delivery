@@ -5,6 +5,8 @@ import './styles.css';
 import { CardapioApp } from './cardapio/CardapioApp';
 
 const AdminApp = lazy(() => import('./admin/AdminApp'));
+const MotoboyApp = lazy(() => import('./motoboy/MotoboyApp'));
+const PegarPedido = lazy(() => import('./motoboy/MotoboyApp').then((m) => ({ default: m.PegarPedido })));
 
 // Falha inesperada na tela: mostra aviso com opção de recarregar em vez de página em branco.
 class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -31,6 +33,8 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/cardapio/*" element={<CardapioApp />} />
           <Route path="/admin/*" element={<AdminApp />} />
+          <Route path="/motoboy/pegar/:orderId" element={<PegarPedido />} />
+          <Route path="/motoboy/:token" element={<MotoboyApp />} />
           <Route path="*" element={<Navigate to="/cardapio" replace />} />
         </Routes>
       </Suspense>

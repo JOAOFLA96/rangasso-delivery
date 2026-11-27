@@ -59,7 +59,7 @@ describe('motoboys', () => {
     expect((await call('POST', '/couriers', owner, { name: 'Zé', phone: '123' })).statusCode).toBe(400);
     expect((await call('PUT', `/couriers/${id}`, owner, { name: 'Carlos', phone: '', active: false })).statusCode).toBe(200);
     const list = (await call('GET', '/couriers', staff)).json().couriers;
-    expect(list).toEqual([{ id, name: 'Carlos', phone: '', active: false }]);
+    expect(list).toEqual([{ id, name: 'Carlos', phone: '', active: false, hasLink: false }]);
   });
 });
 
