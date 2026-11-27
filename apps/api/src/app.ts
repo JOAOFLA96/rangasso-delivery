@@ -24,6 +24,7 @@ import { adminPrinterRoutes } from './routes/admin/printer.js';
 import { adminUserRoutes } from './routes/admin/users.js';
 import { adminLabelRoutes } from './routes/admin/labels.js';
 import { adminDeliveryRoutes } from './routes/admin/deliveries.js';
+import { adminCouponRoutes } from './routes/admin/coupons.js';
 import { courierRoutes } from './routes/courier.js';
 
 export async function buildApp(opts: { logger?: boolean } = {}) {
@@ -102,6 +103,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       await admin.register(adminUserRoutes);
       await admin.register(adminLabelRoutes);
       await admin.register(adminDeliveryRoutes);
+      await admin.register(adminCouponRoutes);
     },
     { prefix: '/api/admin' },
   );

@@ -189,3 +189,23 @@ test('aviso na tela de pedidos quando o agente de impressão para de responder',
     if (others.length) await db.query('UPDATE print_devices SET revoked_at = NULL WHERE id = ANY($1)', [others]);
   }
 });
+
+test('cupons: cria pelo painel e vê o relatório', async ({ page }) => {
+  await db.query(`UPDATE coupons SET archived_at = now(), active = false WHERE code = 'PAINEL15' AND archived_at IS NULL`);
+  await login(page);
+  await page.getByRole('link', { name: 'Configurações' }).click();
+  await page.getByRole('link', { name: 'Cupons' }).click();
+  await expect(page.getByRole('heading', { name: 'Cupons de desconto' })).toBeVisible();
+  await page.getByRole('button', { name: '+ Cupom' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Código').fill('painel 15');
+  await expect(dialog.getByLabel('Código')).toHaveValue('PAINEL15');
+  await dialog.getByLabel('Tipo de desconto').selectOption('fixed');
+  await dialog.getByLabel('Valor do desconto (R$)').fill('15,00');
+  await dialog.getByRole('button', { name: 'Salvar' }).click();
+  await expect(page.getByText('Cupom salvo')).toBeVisible();
+  const row = page.locator('tr', { hasText: 'PAINEL15' });
+  await expect(row).toContainText('R$ 15,00 de desconto');
+  await expect(row).toContainText('Valendo');
+  await noHorizontalScroll(page);
+});
