@@ -25,6 +25,7 @@ import { adminUserRoutes } from './routes/admin/users.js';
 import { adminLabelRoutes } from './routes/admin/labels.js';
 import { adminDeliveryRoutes } from './routes/admin/deliveries.js';
 import { adminCouponRoutes } from './routes/admin/coupons.js';
+import { courierRoutes } from './routes/courier.js';
 
 export async function buildApp(opts: { logger?: boolean } = {}) {
   const app = Fastify({
@@ -91,6 +92,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
   await app.register(publicRoutes, { prefix: '/api/public' });
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(agentRoutes, { prefix: '/api/agent' });
+  await app.register(courierRoutes, { prefix: '/api/courier' });
   await app.register(
     async (admin) => {
       registerAdminGuard(admin);
@@ -121,6 +123,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     const spa = (_req: any, reply: any) => reply.header('cache-control', 'no-cache').sendFile('index.html', webDist);
     app.get('/cardapio', spa);
     app.get('/cardapio/*', spa);
+    app.get('/motoboy/*', spa);
     app.get('/admin', spa);
     app.get('/admin/*', spa);
   }

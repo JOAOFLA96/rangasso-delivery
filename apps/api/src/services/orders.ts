@@ -495,7 +495,7 @@ export async function changeStatus(
   storeId: string,
   orderId: string,
   to: OrderStatus,
-  userId: string,
+  userId: string | null,
   note: string,
 ) {
   const o = await db.query('SELECT id, number, status FROM orders WHERE id = $1 AND store_id = $2 FOR UPDATE', [orderId, storeId]);
