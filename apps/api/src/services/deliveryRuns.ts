@@ -48,14 +48,29 @@ async function storeOrigin(db: Db, storeId: string): Promise<{ origin: Point | s
   return { origin, address: s.address ?? '' };
 }
 
+// Quanto os clientes esperam somados: chegada em cada parada contada da saída da loja (sem a volta).
+function customerWait(legs: TripLeg[]) {
+  let t = 0, sum = 0;
+  for (const l of legs.slice(0, -1)) sum += (t += l.seconds);
+  return sum;
+}
+
 // Ordem das paradas. optimize = Google escolhe; senão mede a ordem recebida. Falhou ou sem Google: pela distância até a loja.
 export async function planStops(db: Db, storeId: string, orders: StopOrder[], optimize: boolean): Promise<Planned> {
   const { origin, address } = await storeOrigin(db, storeId);
   let error: string | null = null;
   if (origin && tripPlannerEnabled()) {
     try {
-      const t = await planTrip(origin, orders.map((o) => stopAddress(o, address)), optimize);
+      const addrs = orders.map((o) => stopAddress(o, address));
+      let t = await planTrip(origin, addrs, optimize);
       if (t && t.legs.length === orders.length + 1) {
+        // O Google acha o menor caminho de ida e volta, que tem dois sentidos quase iguais. Mede o sentido contrário e
+        // fica com o que entrega mais cedo para os clientes (soma dos horários de chegada em cada parada).
+        if (optimize && orders.length > 1) {
+          const back = [...t.order].reverse();
+          const r = await planTrip(origin, back.map((i) => addrs[i]), false).catch(() => null);
+          if (r && r.legs.length === orders.length + 1 && customerWait(r.legs) < customerWait(t.legs)) t = { ...r, order: back };
+        }
         return { orderIds: t.order.map((i) => orders[i].id), legs: t.legs.slice(0, -1), meters: t.meters, seconds: t.seconds, polyline: t.polyline ?? null, by: optimize ? 'google' : 'google_manual', error: null };
       }
       error = 'o Google não devolveu a rota';

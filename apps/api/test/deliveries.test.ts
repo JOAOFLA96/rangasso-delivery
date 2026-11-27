@@ -215,7 +215,7 @@ describe('distribuição automática', () => {
     expect(runs[1].stops.map((s: any) => s.orderId)).toEqual([orders[5].id]);
     expect(new Set([runs[0].courierId, runs[1].courierId])).toEqual(new Set([carlos, ze]));
     // A rota foi otimizada a cada pedido novo (o Google falso inverte a ordem).
-    expect(tripCalls.at(-2)!.optimize).toBe(true);
+    expect(tripCalls.filter((t) => t.optimize).length).toBeGreaterThanOrEqual(6);
     expect((await call('GET', '/deliveries/available', staff)).json().orders).toEqual([]);
 
     // Manual: passa o pedido da 2ª saída para a 1ª (fica com 6, acima do limite automático).
