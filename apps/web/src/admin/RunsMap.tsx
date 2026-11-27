@@ -7,9 +7,13 @@ import 'leaflet/dist/leaflet.css';
 
 export interface MapRun {
   id: string; number: number; status: string; courierName: string | null; polyline: string | null;
+  courierLocation?: { lat: number; lng: number; accuracyM: number | null; at: string } | null;
   stops: { orderId: string; number: number; position: number; customerName: string; lat: number | null; lng: number | null; outcome: string | null }[];
 }
 export const RUN_COLORS = ['#c2410c', '#1d4ed8', '#157f3b', '#7c3aed', '#b42318', '#0e7490', '#a16207', '#be185d'];
+
+const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
 // Polyline codificada do Google (precisão 5).
 export function decodePolyline(str: string): [number, number][] {
@@ -70,8 +74,19 @@ export function RunsMap({ runs, store }: { runs: MapRun[]; store: { lat: number;
         L.marker([s.lat, s.lng], {
           icon: L.divIcon({ className: 'rm-stop', html: `<span style="background:${done ? '#9a948f' : color}">${s.position}</span>`, iconSize: [26, 26] }),
           title: `#${s.number}`,
-        }).bindTooltip(`Saída #${r.number} · ${r.courierName ?? 'sem motoboy'}<br>${s.position}ª parada: pedido #${s.number} · ${s.customerName}${done ? ' (baixado)' : ''}`).addTo(g);
+        }).bindTooltip(`Saída #${r.number} · ${esc(r.courierName ?? 'sem motoboy')}<br>${s.position}ª parada: pedido #${s.number} · ${esc(s.customerName)}${done ? ' (baixado)' : ''}`).addTo(g);
         bounds.push([s.lat, s.lng]);
+      }
+      // Onde o motoboy está agora (celular dele, durante a saída).
+      const loc = r.courierLocation;
+      if (loc && r.status === 'out') {
+        const mins = Math.max(0, Math.round((Date.now() - new Date(loc.at).getTime()) / 60000));
+        L.marker([loc.lat, loc.lng], {
+          icon: L.divIcon({ className: `rm-courier${mins >= 3 ? ' stale' : ''}`, html: `<span style="border-color:${color}">🛵</span>`, iconSize: [34, 34] }),
+          zIndexOffset: 1000,
+          title: r.courierName ?? 'Motoboy',
+        }).bindTooltip(`${esc(r.courierName ?? 'Motoboy')} · saída #${r.number}<br>Posição das ${hhmm(loc.at)}${mins >= 3 ? ` (há ${mins} min, sem sinal)` : ''}${loc.accuracyM ? ` · ±${loc.accuracyM} m` : ''}`).addTo(g);
+        bounds.push([loc.lat, loc.lng]);
       }
     });
     if (bounds.length > 1) m.fitBounds(L.latLngBounds(bounds as L.LatLngTuple[]), { padding: [24, 24], maxZoom: 16 });

@@ -94,6 +94,20 @@ describe('ESC/POS', () => {
     expect(txt).toContain('Cartão na retirada');
   });
 
+  it('QR Code do motoboy: comando GS ( k com o link, só em entrega', () => {
+    const url = 'https://rangasso.onrender.com/motoboy/pegar/11111111-2222-3333-4444-555555555555';
+    const p = { ...orderPayload(), courierQr: url };
+    const buf = renderEscPos(p, { kind: 'original', reprintNumber: 0, copies: 1 });
+    const store = Buffer.concat([Buffer.from([0x1d, 0x28, 0x6b, (url.length + 3) & 0xff, (url.length + 3) >> 8, 0x31, 0x50, 0x30]), Buffer.from(url)]);
+    expect(buf.includes(store)).toBe(true);
+    expect(buf.includes(Buffer.from([0x1d, 0x28, 0x6b, 3, 0, 0x31, 0x51, 0x30]))).toBe(true);
+    expect(renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 })).toContain('MOTOBOY: LEIA PARA PEGAR ESTE PEDIDO');
+    // sem link, retirada ou link estranho: nada de QR
+    for (const q of [orderPayload(), { ...p, order: { ...p.order!, fulfillment: 'pickup' as const } }, { ...p, courierQr: 'javascript:alert(1)' }]) {
+      expect(renderEscPos(q, { kind: 'original', reprintNumber: 0, copies: 1 }).includes(Buffer.from([0x1d, 0x28, 0x6b, 3, 0, 0x31, 0x51, 0x30]))).toBe(false);
+    }
+  });
+
   it('inicializa, seleciona PC860 e corta uma vez por via', () => {
     const buf = renderEscPos(orderPayload(), { kind: 'original', reprintNumber: 0, copies: 2 });
     expect([...buf.subarray(0, 5)]).toEqual([0x1b, 0x40, 0x1b, 0x74, 3]);
