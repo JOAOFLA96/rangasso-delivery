@@ -11,7 +11,8 @@ import { renderEscPos, renderText, type ReceiptPayload } from './receipt.js';
 import { downloadUpdate, markHealthy, pickUpdate } from './updater.js';
 
 const UPDATE_FIRST_CHECK_MS = Number(process.env.RANGASSO_UPDATE_FIRST_MS ?? 2 * 60_000);
-const UPDATE_EVERY_MS = 6 * 3600_000;
+// Confere a cada 30 min: depois de um deploy, a loja não espera horas para ganhar a versão nova (ex.: QR do motoboy no cupom).
+const UPDATE_EVERY_MS = 30 * 60_000;
 export const RESTART_FOR_UPDATE_EXIT_CODE = 3;
 
 const HELP = `Agente de impressão Rangasso ${AGENT_VERSION}
