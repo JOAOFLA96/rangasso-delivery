@@ -196,3 +196,75 @@ describe('ajudantes', () => {
     expect(u.searchParams.get('travelmode')).toBe('driving');
   });
 });
+
+describe('distribuição automática', () => {
+  const accept = (id: string) => call('POST', `/orders/${id}/status`, staff, { status: 'preparing' });
+
+  it('pedido aceito entra sozinho numa saída, até 5; a 6ª abre outra com outro motoboy', async () => {
+    const carlos = await courier('Carlos');
+    const ze = await courier('Zé', '(19) 99111-2222');
+    const orders = [];
+    for (let i = 0; i < 6; i++) orders.push(await newOrder(`Rua ${i}`));
+    // Recebido (ainda não aceito) não entra.
+    expect(await active()).toEqual([]);
+    for (const o of orders) expect((await accept(o.id)).statusCode).toBe(200);
+    const runs = (await active()).sort((a: any, b: any) => a.number - b.number);
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatchObject({ auto: true, status: 'planned', routeBy: 'google' });
+    expect(runs[0].stops).toHaveLength(5);
+    expect(runs[1].stops.map((s: any) => s.orderId)).toEqual([orders[5].id]);
+    expect(new Set([runs[0].courierId, runs[1].courierId])).toEqual(new Set([carlos, ze]));
+    // A rota foi otimizada a cada pedido novo (o Google falso inverte a ordem).
+    expect(tripCalls.at(-2)!.optimize).toBe(true);
+    expect((await call('GET', '/deliveries/available', staff)).json().orders).toEqual([]);
+
+    // Manual: passa o pedido da 2ª saída para a 1ª (fica com 6, acima do limite automático).
+    const mv = await call('POST', `/delivery-runs/${runs[1].id}/stops/${orders[5].id}/move`, staff, { toRunId: runs[0].id });
+    expect(mv.statusCode).toBe(200);
+    const after = await active();
+    expect(after).toHaveLength(1); // a saída que ficou vazia foi desfeita
+    expect(after[0].stops).toHaveLength(6);
+    // Pedido movido à mão não é mexido pelo automático.
+    expect((await pool.query('SELECT auto_dispatch_skip FROM orders WHERE id = $1', [orders[5].id])).rows[0].auto_dispatch_skip).toBe(true);
+  });
+
+  it('desligada: nada entra sozinho; "Distribuir agora" distribui; tirar da saída não volta sozinho', async () => {
+    await courier('Carlos');
+    expect((await call('PUT', '/deliveries/settings', staff, { autoDispatch: false, autoDispatchMax: 3 })).statusCode).toBe(403);
+    expect((await call('PUT', '/deliveries/settings', owner, { autoDispatch: false, autoDispatchMax: 3 })).statusCode).toBe(200);
+    expect((await call('GET', '/deliveries/settings', staff)).json()).toMatchObject({ autoDispatch: false, autoDispatchMax: 3 });
+    const os = [];
+    for (let i = 0; i < 4; i++) {
+      const o = await newOrder(`Rua ${i}`);
+      await accept(o.id);
+      os.push(o);
+    }
+    expect(await active()).toEqual([]);
+    expect((await call('POST', '/deliveries/auto', staff)).json()).toEqual({ runs: 2 });
+    const runs = (await active()).sort((a: any, b: any) => a.number - b.number);
+    expect(runs.map((r: any) => r.stops.length)).toEqual([3, 1]);
+    expect(runs[1].courierId).toBeNull(); // único motoboy já está na outra saída
+    // Operador tira um pedido: ele volta para a lista e não entra de novo sozinho.
+    const keep = runs[0].stops.slice(0, 2).map((s: any) => s.orderId);
+    const removed = runs[0].stops[2].orderId;
+    await call('PUT', `/delivery-runs/${runs[0].id}`, staff, { orderIds: keep, optimize: false });
+    await call('PUT', '/deliveries/settings', owner, { autoDispatch: true, autoDispatchMax: 3 });
+    expect((await call('GET', '/deliveries/available', staff)).json().orders.map((o: any) => o.id)).toEqual([removed]);
+    // Mover para uma saída nova com motoboy escolhido.
+    const mv = await call('POST', `/delivery-runs/${runs[0].id}/stops/${keep[0]}/move`, staff, { courierId: null });
+    expect(mv.statusCode).toBe(200);
+    expect((await active()).length).toBe(3);
+  });
+
+  it('o mapa recebe o traçado e o ponto de cada parada', async () => {
+    setTripPlanner(async (_o, stops, optimize) => ({
+      order: stops.map((_, i) => i), meters: 2000, seconds: 300, polyline: 'abc123',
+      legs: [...stops, 'volta'].map((_, i) => ({ meters: 1000, seconds: 150, end: { lat: -23.1 + i / 100, lng: -47.2 } })),
+    }));
+    const a = await newOrder('Rua A');
+    await call('POST', '/delivery-runs', staff, { orderIds: [a.id], optimize: false });
+    const [run] = await active();
+    expect(run.polyline).toBe('abc123');
+    expect(run.stops[0]).toMatchObject({ lat: -23.1, lng: -47.2 });
+  });
+});

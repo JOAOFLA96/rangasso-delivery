@@ -40,7 +40,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'blob:'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org'], // mapa da tela de Entregas
         styleSrc: ["'self'", "'unsafe-inline'"],
         scriptSrc: ["'self'"],
         connectSrc: ["'self'", 'https://viacep.com.br'],
