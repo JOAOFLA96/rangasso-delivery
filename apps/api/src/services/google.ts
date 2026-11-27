@@ -165,8 +165,8 @@ export async function probeGoogle() {
 // Rota do motoboy: saindo da loja, passando por todas as entregas e voltando. Com optimize, o Google escolhe a ordem das
 // paradas (optimizeWaypointOrder); sem, mede a ordem dada. Paradas vão como endereço escrito (o Google acha cada uma).
 
-export interface TripLeg { meters: number; seconds: number }
-export interface Trip { order: number[]; legs: TripLeg[]; meters: number; seconds: number }
+export interface TripLeg { meters: number; seconds: number; end?: Point | null }
+export interface Trip { order: number[]; legs: TripLeg[]; meters: number; seconds: number; polyline?: string | null }
 export type TripFn = (origin: Point | string, stops: string[], optimize: boolean) => Promise<Trip | null>;
 
 const seconds = (d?: string) => (d ? Math.round(parseFloat(d)) || 0 : 0); // "123s"
@@ -181,7 +181,7 @@ const trip: TripFn = async (origin, stops, optimize) => {
       headers: {
         'content-type': 'application/json',
         'x-goog-api-key': key,
-        'x-goog-fieldmask': 'routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration,routes.optimizedIntermediateWaypointIndex',
+        'x-goog-fieldmask': 'routes.distanceMeters,routes.duration,routes.legs.distanceMeters,routes.legs.duration,routes.legs.endLocation,routes.polyline.encodedPolyline,routes.optimizedIntermediateWaypointIndex',
       },
       body: JSON.stringify({
         origin: waypoint(origin), destination: waypoint(origin), intermediates: stops.map((s) => ({ address: s })),
@@ -197,7 +197,7 @@ const trip: TripFn = async (origin, stops, optimize) => {
       throw new Error(lastError);
     }
     const data = (await res.json()) as {
-      routes?: { distanceMeters?: number; duration?: string; legs?: { distanceMeters?: number; duration?: string }[]; optimizedIntermediateWaypointIndex?: number[] }[];
+      routes?: { distanceMeters?: number; duration?: string; legs?: { distanceMeters?: number; duration?: string; endLocation?: any }[]; optimizedIntermediateWaypointIndex?: number[]; polyline?: { encodedPolyline?: string } }[];
     };
     const r = data.routes?.[0];
     if (!r?.legs?.length) return null;
@@ -206,7 +206,8 @@ const trip: TripFn = async (origin, stops, optimize) => {
     const order = optimize && idx?.length === stops.length && idx.every((i) => i >= 0) ? idx : stops.map((_, i) => i);
     return {
       order,
-      legs: r.legs.map((l) => ({ meters: l.distanceMeters ?? 0, seconds: seconds(l.duration) })),
+      legs: r.legs.map((l) => ({ meters: l.distanceMeters ?? 0, seconds: seconds(l.duration), end: toPoint(l.endLocation) })),
+      polyline: r.polyline?.encodedPolyline ?? null,
       meters: r.distanceMeters ?? 0,
       seconds: seconds(r.duration),
     };

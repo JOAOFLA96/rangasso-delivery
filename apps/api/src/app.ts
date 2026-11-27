@@ -42,7 +42,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'blob:'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org'], // mapa da tela de Entregas
         styleSrc: ["'self'", "'unsafe-inline'"],
         scriptSrc: ["'self'"],
         connectSrc: ["'self'", 'https://viacep.com.br'],
@@ -71,6 +71,10 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     req.log.error(err);
     return reply.code(500).send({ error: { code: 'internal', message: 'Erro interno. Tente novamente.' } });
   });
+
+  // Sinal de vida sem consultar o banco: usado pelo health check do Render e pelo "acordador" externo.
+  // Assim o site fica acordado sem manter o banco (Neon grátis, horas de uso limitadas) ligado o tempo todo.
+  app.get('/api/ping', { config: { rateLimit: false } }, async () => ({ ok: true }));
 
   app.get('/api/health', async () => {
     await pool.query('SELECT 1');

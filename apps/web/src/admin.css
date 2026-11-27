@@ -252,6 +252,13 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
 .dl-courier-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
 .dl-courier-form .field { margin: 0; }
 .dl-total td { font-weight: 800; }
+.dl-row-sel td { background: var(--brand-soft); }
+.dl-hist-head { margin-top: 14px; }
+.dl-hist { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 10px; }
+.dl-hist > li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.dl-hist-run { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; }
+.dl-hist-stops { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+.dl-hist-stops li { display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }
 @media (max-width: 640px) {
   .dl-main { padding: 10px; }
   .dl-stop { grid-template-columns: 28px 1fr; }
@@ -260,3 +267,13 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
   .dl-courier-form { grid-template-columns: 1fr; }
   .dl-run-actions .btn { flex: 1 1 45%; }
 }
+
+.dl-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex: none; margin-right: 6px; }
+.dl-auto .toggle { flex: 1 1 320px; }
+.dl-board-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.dl-board-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.dl-move { min-height: 34px; max-width: 170px; font-size: .85rem; }
+.rm-map { height: 360px; border-radius: 10px; border: 1px solid var(--line); margin-top: 8px; z-index: 0; }
+.rm-store { font-size: 22px; line-height: 28px; text-align: center; }
+.rm-stop span { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; color: #fff; font-weight: 800; font-size: 13px; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+@media (max-width: 640px) { .rm-map { height: 280px; } .dl-move { max-width: none; flex: 1 1 100%; } }

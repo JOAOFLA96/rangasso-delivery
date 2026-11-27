@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb, seed, makeApp, orderBody, loginAs, pool, PASSWORD, type Fixture } from './helpers.js';
 
 let app: Awaited<ReturnType<typeof makeApp>>;
@@ -11,6 +11,17 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   await app.close();
+});
+
+describe('sinal de vida', () => {
+  it('/api/ping responde sem consultar o banco', async () => {
+    const spy = vi.spyOn(pool, 'query');
+    const res = await app.inject({ method: 'GET', url: '/api/ping' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });
 
 describe('autenticação e permissões', () => {

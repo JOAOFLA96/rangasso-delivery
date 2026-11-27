@@ -9,9 +9,10 @@ import { cleanText, normalizeCep, normalizeName, normalizePhone } from '../lib/t
 import { effectivePrice } from './pricing.js';
 import { getOpenState, getSettings } from './store.js';
 import { createPrintJob } from './print.js';
-import { geocodeAddress, type GeoAddress } from './geocode.js';
+import { geocodeAddress, type GeoAddress, type GeoTry } from './geocode.js';
 import { deliveryDistance, type Distance } from './routing.js';
 import { addressLine, googleDistance, googleEnabled } from './google.js';
+import { saveMeasuredAddress, savedDistance } from './savedAddresses.js';
 
 export const ORDER_STATUSES = ['received', 'confirmed', 'preparing', 'out_for_delivery', 'completed', 'cancelled'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -225,15 +226,28 @@ async function resolveDelivery(db: Db, storeId: string, settings: any, ref: Hood
     const full = { ...addr, neighborhood: name };
     let dist: Distance | null = null;
     if (ruleReady(rule)) {
+      let mapsDown = !googleEnabled();
       if (googleEnabled()) {
-        const g = await googleDistance(db, store, addressLine(full));
-        // Por enquanto, sem reserva: os bairros salvos com a taxa ficam guardados para uso futuro.
-        if (!g) throw badRequest('address_not_found', 'Não encontramos esse endereço no mapa. Confira o CEP e o número da casa.', { field: 'address.cep' });
-        dist = { km: g.km, by: 'route' };
+        const trace: GeoTry[] = [];
+        const g = await googleDistance(db, store, addressLine(full), trace);
+        if (g) dist = { km: g.km, by: 'route' };
+        else mapsDown = trace.some((t) => t.result === 'erro');
+        // Google respondeu e não achou o endereço: o cliente precisa conferir o CEP.
+        if (!g && !mapsDown) throw badRequest('address_not_found', 'Não encontramos esse endereço no mapa. Confira o CEP e o número da casa.', { field: 'address.cep' });
       } else {
         const point = await geocodeAddress(db, full);
         if (point) dist = await deliveryDistance(db, store, point);
       }
+      // Plano B (Google fora do ar ou sem chave): distância já medida para este endereço (ou o mesmo CEP)...
+      if (!dist && mapsDown) {
+        const saved = await savedDistance(db, storeId, full);
+        if (saved) dist = { km: saved.km, by: 'route' };
+      }
+      // ...ou a taxa que o bairro ganhou nas entregas anteriores.
+      if (!dist && mapsDown && hood && hood.active && !hood.fee_pending) {
+        return { hood, fee: hood.fee_cents as number, feePending: false, distanceKm: null as number | null, distanceBy: null as 'route' | 'straight' | null, source: 'neighborhood' as const };
+      }
+      if (!dist && googleEnabled()) throw badRequest('address_not_found', 'Não conseguimos calcular a entrega agora. Confira o CEP e o número da casa.', { field: 'address.cep' });
     }
     if (dist) {
       const km = dist.km;
@@ -243,6 +257,8 @@ async function resolveDelivery(db: Db, storeId: string, settings: any, ref: Hood
         throw badRequest('area_not_served', `Seu endereço fica a ${fmtKm(km)} km da loja.${limit != null ? ` Entregamos até ${fmtKm(limit)} km.` : ''}`);
       }
       if (hood && !hood.active) throw badRequest('area_not_served', 'Ainda não entregamos nesse bairro.');
+      // Todo endereço medido fica guardado (CEP, número, rua, bairro, km e taxa) para servir de plano B.
+      if (create && dist.by === 'route') await saveMeasuredAddress(db, storeId, full, km, fee);
       // Cadastro automático: bairro novo entra (ou bairro "a combinar" é atualizado) com a taxa desta distância.
       // Bairro com taxa já definida não é alterado. Fica guardado para servir de reserva no futuro.
       if (create && name && (!hood || hood.fee_pending)) {

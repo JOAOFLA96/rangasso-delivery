@@ -19,7 +19,7 @@ export interface StopOrder {
   id: string; number: number; status: OrderStatus; street: string; street_number: string; neighborhood_name: string; city: string; cep: string;
   delivery_distance_km: string | null;
 }
-interface Planned { orderIds: string[]; legs: (TripLeg | null)[]; meters: number | null; seconds: number | null; by: 'google' | 'google_manual' | 'distance'; error: string | null }
+interface Planned { orderIds: string[]; legs: (TripLeg | null)[]; meters: number | null; seconds: number | null; polyline: string | null; by: 'google' | 'google_manual' | 'distance'; error: string | null }
 
 // "Av. Itororó, 681 - Cidade Nova I, Indaiatuba - SP, 13334-050" → cidade e UF, para completar endereço de pedido sem cidade.
 export function cityOf(storeAddress: string) {
@@ -58,7 +58,7 @@ export async function planStops(db: Db, storeId: string, orders: StopOrder[], op
     try {
       const t = await planTrip(origin, orders.map((o) => stopAddress(o, address)), optimize);
       if (t && t.legs.length === orders.length + 1) {
-        return { orderIds: t.order.map((i) => orders[i].id), legs: t.legs.slice(0, -1), meters: t.meters, seconds: t.seconds, by: optimize ? 'google' : 'google_manual', error: null };
+        return { orderIds: t.order.map((i) => orders[i].id), legs: t.legs.slice(0, -1), meters: t.meters, seconds: t.seconds, polyline: t.polyline ?? null, by: optimize ? 'google' : 'google_manual', error: null };
       }
       error = 'o Google não devolveu a rota';
     } catch (e) {
@@ -69,7 +69,7 @@ export async function planStops(db: Db, storeId: string, orders: StopOrder[], op
   const sorted = optimize
     ? [...orders].sort((a, b) => (Number(a.delivery_distance_km ?? 999) - Number(b.delivery_distance_km ?? 999)) || a.number - b.number)
     : orders;
-  return { orderIds: sorted.map((o) => o.id), legs: sorted.map(() => null), meters: null, seconds: null, by: 'distance', error };
+  return { orderIds: sorted.map((o) => o.id), legs: sorted.map(() => null), meters: null, seconds: null, polyline: null, by: 'distance', error };
 }
 
 const ORDER_COLS = `o.id, o.number, o.status, o.street, o.street_number, o.neighborhood_name, o.city, o.cep, o.delivery_distance_km`;
@@ -99,14 +99,14 @@ async function writeStops(db: PoolClient, runId: string, plan: Planned) {
   for (const [i, id] of plan.orderIds.entries()) {
     const leg = plan.legs[i];
     await db.query(
-      `INSERT INTO delivery_run_stops (run_id, order_id, position, leg_distance_m, leg_duration_s) VALUES ($1,$2,$3,$4,$5)`,
-      [runId, id, i + 1, leg?.meters ?? null, leg?.seconds ?? null],
+      `INSERT INTO delivery_run_stops (run_id, order_id, position, leg_distance_m, leg_duration_s, lat, lng) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [runId, id, i + 1, leg?.meters ?? null, leg?.seconds ?? null, leg?.end?.lat ?? null, leg?.end?.lng ?? null],
     );
   }
   await db.query(`UPDATE orders SET delivery_run_id = $1 WHERE id = ANY($2::uuid[])`, [runId, plan.orderIds]);
   await db.query(
-    `UPDATE delivery_runs SET route_by = $2, route_error = $3, total_distance_m = $4, total_duration_s = $5 WHERE id = $1`,
-    [runId, plan.by, plan.error, plan.meters, plan.seconds],
+    `UPDATE delivery_runs SET route_by = $2, route_error = $3, total_distance_m = $4, total_duration_s = $5, route_polyline = $6 WHERE id = $1`,
+    [runId, plan.by, plan.error, plan.meters, plan.seconds, plan.polyline],
   );
 }
 
@@ -142,7 +142,7 @@ async function lockRun(db: PoolClient, storeId: string, runId: string) {
 }
 
 // Troca as paradas de uma saída que ainda não saiu (incluir, tirar ou reordenar). optimize=false mantém a ordem recebida.
-export async function updateRun(tx: <T>(fn: (db: PoolClient) => Promise<T>) => Promise<T>, db: Db, storeId: string, runId: string, input: { courierId?: string | null; orderIds?: string[]; optimize: boolean }) {
+export async function updateRun(tx: <T>(fn: (db: PoolClient) => Promise<T>) => Promise<T>, db: Db, storeId: string, runId: string, input: { courierId?: string | null; orderIds?: string[]; optimize: boolean }, _manual = true) {
   if (input.courierId !== undefined) await checkCourier(db, storeId, input.courierId);
   const plan = input.orderIds ? await planStops(db, storeId, await loadOrders(db, storeId, input.orderIds, runId), input.optimize) : null;
   return tx(async (c) => {
@@ -154,7 +154,8 @@ export async function updateRun(tx: <T>(fn: (db: PoolClient) => Promise<T>) => P
     if (plan) {
       if (run.status !== 'planned') throw badRequest('run_started', 'O motoboy já saiu: não dá para mudar as paradas.');
       await loadOrders(c, storeId, input.orderIds!, runId, true);
-      await c.query('UPDATE orders SET delivery_run_id = NULL WHERE delivery_run_id = $1 AND NOT (id = ANY($2::uuid[]))', [runId, plan.orderIds]);
+      // Pedido tirado pelo operador fica com ele: a distribuição automática não coloca de volta.
+      await c.query('UPDATE orders SET delivery_run_id = NULL, auto_dispatch_skip = true WHERE delivery_run_id = $1 AND NOT (id = ANY($2::uuid[]))', [runId, plan.orderIds]);
       await writeStops(c, runId, plan);
     }
     return { number: run.number as number, routeBy: plan?.by, routeError: plan?.error ?? null };
@@ -218,7 +219,7 @@ export async function stopOutcome(c: PoolClient, storeId: string, runId: string,
       changed = { from: s.status };
     }
   } else {
-    await c.query('UPDATE orders SET delivery_run_id = NULL WHERE id = $1', [orderId]);
+    await c.query('UPDATE orders SET delivery_run_id = NULL, auto_dispatch_skip = true WHERE id = $1', [orderId]);
   }
   await c.query(`UPDATE delivery_run_stops SET outcome = $3, outcome_note = $4, outcome_at = now() WHERE run_id = $1 AND order_id = $2`, [runId, orderId, outcome, note.trim()]);
   return { number: s.number as number, changed };
@@ -247,7 +248,7 @@ export async function listRuns(db: Db, storeId: string, where: string, params: u
   )).rows;
   if (!runs.length) return [];
   const stops = (await db.query(
-    `SELECT s.run_id, s.position, s.leg_distance_m, s.leg_duration_s, s.outcome, s.outcome_note, s.outcome_at,
+    `SELECT s.run_id, s.position, s.lat, s.lng, s.leg_distance_m, s.leg_duration_s, s.outcome, s.outcome_note, s.outcome_at,
             o.id AS order_id, o.number, o.status, o.customer_name, o.customer_phone, o.street, o.street_number, o.complement, o.reference,
             o.neighborhood_name, o.city, o.cep, o.payment_method, o.change_for_cents, o.total_cents, o.delivery_fee_cents, o.created_at AS order_created_at
        FROM delivery_run_stops s JOIN orders o ON o.id = s.order_id WHERE s.run_id = ANY($1::uuid[]) ORDER BY s.position`,
@@ -265,13 +266,13 @@ export async function listRuns(db: Db, storeId: string, where: string, params: u
         paymentMethod: s.payment_method, changeForCents: s.change_for_cents, totalCents: s.total_cents, deliveryFeeCents: s.delivery_fee_cents,
         legDistanceM: s.leg_distance_m, legDurationS: s.leg_duration_s, etaOffsetS: s.leg_duration_s != null ? acc : null,
         outcome: s.outcome, outcomeNote: s.outcome_note, outcomeAt: s.outcome_at, orderCreatedAt: s.order_created_at,
-        address: stopAddress(s, address),
+        address: stopAddress(s, address), lat: s.lat, lng: s.lng,
       };
     });
     const pending = st.filter((s) => !s.outcome && s.status !== 'cancelled');
     return {
-      id: r.id, number: r.number, status: r.status, courierId: r.courier_id, courierName: r.courier_name, courierPhone: r.courier_phone,
-      routeBy: r.route_by, routeError: r.route_error, totalDistanceM: r.total_distance_m, totalDurationS: r.total_duration_s,
+      id: r.id, number: r.number, status: r.status, auto: r.auto, courierId: r.courier_id, courierName: r.courier_name, courierPhone: r.courier_phone,
+      routeBy: r.route_by, routeError: r.route_error, polyline: r.route_polyline, totalDistanceM: r.total_distance_m, totalDurationS: r.total_duration_s,
       createdAt: r.created_at, departedAt: r.departed_at, finishedAt: r.finished_at, stops: st,
       // Depois da saída, o link leva só às paradas que faltam.
       mapsUrl: mapsUrl((r.status === 'out' ? pending : st.filter((s) => s.status !== 'cancelled')).map((s) => s.address)),
@@ -280,3 +281,101 @@ export async function listRuns(db: Db, storeId: string, where: string, params: u
 }
 
 export const ACTIVE_RUNS_WHERE = `r.status IN ${ACTIVE_RUN}`;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Distribuição automática. Pedido de entrega aceito (confirmado, em preparo ou saiu) e fora de saída entra na saída aberta
+// (ainda não saiu) mais antiga que tenha vaga até o limite; sem vaga, abre uma saída nova com o motoboy livre que fez menos
+// saídas hoje (ou sem motoboy, se todos estiverem na rua). Depois o Google reordena cada saída mexida.
+// O limite vale só para o automático: o operador pode colocar mais pedidos à mão (até MAX_STOPS).
+
+type Tx = <T>(fn: (db: PoolClient) => Promise<T>) => Promise<T>;
+
+export async function autoDispatch(tx: Tx, db: Db, storeId: string, force = false) {
+  const touched = await tx(async (c) => {
+    await c.query('SELECT pg_advisory_xact_lock(727101, hashtext($1))', [storeId]);
+    const s = (await c.query('SELECT auto_dispatch, auto_dispatch_max, timezone FROM store_settings WHERE store_id = $1', [storeId])).rows[0];
+    if (!s || (!s.auto_dispatch && !force)) return [] as string[];
+    const max = Math.min(s.auto_dispatch_max as number, MAX_STOPS);
+    const orders = (await c.query(
+      `SELECT o.id FROM orders o WHERE o.store_id = $1 AND ${AVAILABLE_SQL} AND o.status IN ('confirmed','preparing','out_for_delivery')
+          AND NOT o.auto_dispatch_skip ORDER BY o.created_at FOR UPDATE`,
+      [storeId],
+    )).rows as { id: string }[];
+    if (!orders.length) return [];
+    const runs = (await c.query(
+      `SELECT r.id, (SELECT count(*) FROM delivery_run_stops s WHERE s.run_id = r.id)::int AS n
+         FROM delivery_runs r WHERE r.store_id = $1 AND r.status = 'planned' ORDER BY r.created_at FOR UPDATE`,
+      [storeId],
+    )).rows as { id: string; n: number }[];
+    const touchedIds = new Set<string>();
+    for (const o of orders) {
+      let run = runs.find((r) => r.n < max);
+      if (!run) {
+        const courier = (await c.query(
+          `SELECT c.id FROM couriers c WHERE c.store_id = $1 AND c.active
+              AND NOT EXISTS (SELECT 1 FROM delivery_runs r WHERE r.courier_id = c.id AND r.status IN ('planned','out'))
+            ORDER BY (SELECT count(*) FROM delivery_runs r WHERE r.courier_id = c.id
+                       AND (r.created_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date), lower(c.name) LIMIT 1`,
+          [storeId, s.timezone],
+        )).rows[0];
+        const n = (await c.query('SELECT coalesce(max(number),0)+1 AS n FROM delivery_runs WHERE store_id = $1', [storeId])).rows[0].n;
+        const id = (await c.query(
+          `INSERT INTO delivery_runs (store_id, number, courier_id, auto) VALUES ($1,$2,$3,true) RETURNING id`, [storeId, n, courier?.id ?? null],
+        )).rows[0].id;
+        run = { id, n: 0 };
+        runs.push(run);
+      }
+      run.n++;
+      await c.query(`INSERT INTO delivery_run_stops (run_id, order_id, position) VALUES ($1,$2,$3)`, [run.id, o.id, run.n]);
+      await c.query('UPDATE orders SET delivery_run_id = $1 WHERE id = $2', [run.id, o.id]);
+      touchedIds.add(run.id);
+    }
+    return [...touchedIds];
+  });
+  // Rota de cada saída mexida (fora da transação: o Google pode levar alguns segundos).
+  for (const runId of touched) {
+    const ids = (await db.query('SELECT order_id FROM delivery_run_stops WHERE run_id = $1 ORDER BY position', [runId])).rows.map((r) => r.order_id);
+    try {
+      await updateRun(tx, db, storeId, runId, { orderIds: ids, optimize: true }, false);
+    } catch {
+      /* a saída mudou nesse meio tempo (saiu, foi desfeita): fica como está */
+    }
+  }
+  return touched;
+}
+
+// Operador move um pedido de uma saída que ainda não saiu para outra (ou para uma nova). Aqui não há limite de 5.
+export async function moveStop(tx: Tx, db: Db, storeId: string, userId: string, fromRunId: string, orderId: string, to: { runId?: string; courierId?: string | null }) {
+  const res = await tx(async (c) => {
+    const from = await lockRun(c, storeId, fromRunId);
+    if (from.status !== 'planned') throw badRequest('run_started', 'O motoboy já saiu: não dá para mudar as paradas.');
+    const stop = (await c.query('SELECT 1 FROM delivery_run_stops WHERE run_id = $1 AND order_id = $2', [fromRunId, orderId])).rows[0];
+    if (!stop) throw notFound('Parada');
+    let toId = to.runId;
+    if (toId) {
+      if (toId === fromRunId) throw badRequest('same_run', 'O pedido já está nessa saída.');
+      const dest = await lockRun(c, storeId, toId);
+      if (dest.status !== 'planned') throw badRequest('run_started', 'Essa saída já saiu: escolha outra.');
+      const n = (await c.query('SELECT count(*)::int AS n FROM delivery_run_stops WHERE run_id = $1', [toId])).rows[0].n;
+      if (n >= MAX_STOPS) throw badRequest('too_many_stops', `Uma saída leva no máximo ${MAX_STOPS} pedidos.`);
+    } else {
+      await checkCourier(c, storeId, to.courierId ?? null);
+      await c.query('SELECT 1 FROM store_settings WHERE store_id = $1 FOR UPDATE', [storeId]);
+      const n = (await c.query('SELECT coalesce(max(number),0)+1 AS n FROM delivery_runs WHERE store_id = $1', [storeId])).rows[0].n;
+      toId = (await c.query(`INSERT INTO delivery_runs (store_id, number, courier_id, created_by) VALUES ($1,$2,$3,$4) RETURNING id`,
+        [storeId, n, to.courierId ?? null, userId])).rows[0].id as string;
+    }
+    await c.query('DELETE FROM delivery_run_stops WHERE run_id = $1 AND order_id = $2', [fromRunId, orderId]);
+    const pos = (await c.query('SELECT coalesce(max(position),0)+1 AS p FROM delivery_run_stops WHERE run_id = $1', [toId])).rows[0].p;
+    await c.query('INSERT INTO delivery_run_stops (run_id, order_id, position) VALUES ($1,$2,$3)', [toId, orderId, pos]);
+    await c.query('UPDATE orders SET delivery_run_id = $1, auto_dispatch_skip = true WHERE id = $2', [toId, orderId]);
+    const left = (await c.query('SELECT count(*)::int AS n FROM delivery_run_stops WHERE run_id = $1', [fromRunId])).rows[0].n;
+    if (!left) await c.query(`UPDATE delivery_runs SET status = 'cancelled', finished_at = now() WHERE id = $1`, [fromRunId]);
+    return { toId: toId!, fromEmpty: !left };
+  });
+  for (const runId of res.fromEmpty ? [res.toId] : [fromRunId, res.toId]) {
+    const ids = (await db.query('SELECT order_id FROM delivery_run_stops WHERE run_id = $1 ORDER BY position', [runId])).rows.map((r) => r.order_id);
+    await updateRun(tx, db, storeId, runId, { orderIds: ids, optimize: true }, false).catch(() => undefined);
+  }
+  return res;
+}
