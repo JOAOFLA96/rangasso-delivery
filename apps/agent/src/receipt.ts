@@ -23,6 +23,7 @@ export interface ReceiptPayload {
     deliveryDistanceKm?: number | null; // taxa por km: distância da loja (pelas ruas ou em linha reta)
     deliveryDistanceBy?: 'route' | 'straight' | null;
     discountCents: number;
+    couponCode?: string | null; // cupom de desconto usado no pedido
     totalCents: number;
     paymentMethod: 'cash' | 'pix' | 'card' | 'online';
     changeForCents: number | null;
@@ -119,7 +120,7 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
   const feeLabel = o.deliveryDistanceKm != null ? `Taxa (${o.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : 'Taxa de entrega';
   if (!pickup) for (const l of leftRight(feeLabel, o.deliveryFeePending ? 'A COMBINAR' : brl(o.deliveryFeeCents), W)) L(l, { bold: !!o.deliveryFeePending });
   if (o.extraFeesCents) for (const l of leftRight('Taxas do app', brl(o.extraFeesCents), W)) L(l);
-  if (o.discountCents > 0) for (const l of leftRight('Desconto', `-${brl(o.discountCents)}`, W)) L(l);
+  if (o.discountCents > 0) for (const l of leftRight(o.couponCode ? `Desconto (cupom ${o.couponCode})` : 'Desconto', `-${brl(o.discountCents)}`, W)) L(l);
   for (const l of leftRight(o.deliveryFeePending ? 'TOTAL + TAXA' : 'TOTAL', brl(o.totalCents), W)) L(l, { bold: true, big: 'tall' });
   L(rule(W));
   const payName = app && o.paymentLabel ? o.paymentLabel : pickup && o.paymentMethod === 'card' ? 'Cartão na retirada' : PAY[o.paymentMethod] ?? o.paymentMethod;

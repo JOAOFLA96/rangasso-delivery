@@ -27,6 +27,17 @@ export const orderPayload = (columns = 48): ReceiptPayload => ({
 });
 
 describe('texto da comanda', () => {
+  it('mostra o cupom de desconto usado', () => {
+    for (const w of [32, 48]) {
+      const p = orderPayload(w);
+      Object.assign(p.order!, { discountCents: 948, couponCode: 'BEMVINDO10', totalCents: 8532 });
+      const txt = renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 });
+      expect(txt).toContain('BEMVINDO10');
+      expect(txt).toContain('-R$ 9,48');
+      for (const l of txt.split('\n')) if (!l.includes('(corte)')) expect(l.length, l).toBeLessThanOrEqual(w);
+    }
+  });
+
   it('formata dinheiro em reais', () => {
     expect(brl(0)).toBe('R$ 0,00');
     expect(brl(9480)).toBe('R$ 94,80');

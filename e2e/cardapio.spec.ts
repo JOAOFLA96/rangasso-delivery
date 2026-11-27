@@ -252,3 +252,54 @@ test('cliente vê seus pedidos ao voltar e avalia com estrelas, comentário e fo
   await page.goto('/cardapio/pedidos');
   await expect(page.locator('.my-order', { hasText: `Pedido #${number}` })).toContainText('Você avaliou: ★★★★★');
 });
+
+test('cupom de desconto no checkout: erro claro, aplica, remove e grava no pedido', async ({ page }) => {
+  await db.query(`DELETE FROM coupons WHERE code IN ('E2E10','E2EMIN') AND NOT EXISTS (SELECT 1 FROM orders WHERE coupon_id = coupons.id)`);
+  await db.query(`UPDATE coupons SET archived_at = now() WHERE code IN ('E2E10','E2EMIN') AND archived_at IS NULL`);
+  const store = (await db.query('SELECT id FROM stores LIMIT 1')).rows[0].id;
+  await db.query(`INSERT INTO coupons (store_id, code, kind, percent) VALUES ($1, 'E2E10', 'percent', 10)`, [store]);
+  await db.query(`INSERT INTO coupons (store_id, code, kind, amount_cents, min_order_cents) VALUES ($1, 'E2EMIN', 'fixed', 500, 99900)`, [store]);
+
+  await page.goto('/cardapio');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole('button', { name: /Batata frita/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /Adicionar/ }).click();
+  await page.getByRole('button', { name: /Ver carrinho/ }).click();
+  await page.getByRole('button', { name: 'Finalizar pedido' }).click();
+  await page.getByLabel('Nome').fill('Cliente Cupom');
+  await page.getByLabel('Telefone (WhatsApp)').pressSequentially('11955554444');
+  await page.getByLabel('Rua').fill('Rua Cupom');
+  await page.getByLabel('Número').fill('7');
+  await page.getByLabel('Bairro').selectOption({ index: 1 });
+  await page.getByText('Pix').click();
+  await page.getByText(/Concordo com o uso/).click();
+  await expect(page.locator('.totals .total')).toContainText('R$');
+  const fullTotal = (await page.locator('.totals .total strong').textContent())!;
+
+  // Código inexistente e pedido mínimo: mensagem clara e o total não muda.
+  await page.getByLabel(/Cupom de desconto/).fill('naoexiste');
+  await page.getByRole('button', { name: 'Aplicar' }).click();
+  await expect(page.getByText(/Cupom inválido/)).toBeVisible();
+  await page.getByLabel(/Cupom de desconto/).fill('e2emin');
+  await page.getByLabel(/Cupom de desconto/).press('Enter');
+  await expect(page.getByText(/vale para pedidos a partir de R\$ 999,00/)).toBeVisible();
+  await expect(page.locator('.totals .total strong')).toHaveText(fullTotal);
+
+  // Cupom válido (minúsculo também vale).
+  await page.getByLabel(/Cupom de desconto/).fill('e2e10');
+  await page.getByRole('button', { name: 'Aplicar' }).click();
+  await expect(page.getByText(/Cupom E2E10 aplicado/)).toBeVisible();
+  await expect(page.locator('.discount-line')).toContainText('Desconto (cupom E2E10)');
+  await expect(page.locator('.totals .total strong')).not.toHaveText(fullTotal);
+  await noHorizontalScroll(page);
+
+  await page.getByRole('button', { name: /Enviar pedido/ }).click();
+  await expect(page.getByText(/Recebemos seu pedido/)).toBeVisible();
+  await expect(page.getByText('Desconto (cupom E2E10)')).toBeVisible();
+  const number = Number((await page.locator('.order-number').textContent())!.replace('#', ''));
+  const o = (await db.query('SELECT subtotal_cents, delivery_fee_cents, discount_cents, total_cents, coupon_code FROM orders WHERE number = $1', [number])).rows[0];
+  expect(o.coupon_code).toBe('E2E10');
+  expect(o.discount_cents).toBe(Math.round(o.subtotal_cents * 0.1));
+  expect(o.total_cents).toBe(o.subtotal_cents + o.delivery_fee_cents - o.discount_cents);
+});

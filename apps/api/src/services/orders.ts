@@ -13,6 +13,7 @@ import { geocodeAddress, type GeoAddress, type GeoTry } from './geocode.js';
 import { deliveryDistance, type Distance } from './routing.js';
 import { addressLine, googleDistance, googleEnabled } from './google.js';
 import { saveMeasuredAddress, savedDistance } from './savedAddresses.js';
+import { applyCoupon, type AppliedCoupon } from './coupons.js';
 
 export const ORDER_STATUSES = ['received', 'confirmed', 'preparing', 'out_for_delivery', 'completed', 'cancelled'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
@@ -71,6 +72,8 @@ export const createOrderSchema = z.object({
     )
     .min(1)
     .max(50),
+  // Cupom de desconto (opcional): o servidor confere validade, limites e calcula o desconto.
+  couponCode: z.string().trim().max(30).optional().default(''),
   acceptPrivacy: z.literal(true),
 }).refine((o) => o.fulfillment === 'pickup' || o.address, { path: ['address', 'street'], message: 'Informe o endereço de entrega.' });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
@@ -293,7 +296,10 @@ const PICKUP_DELIVERY = {
   fee: 0, feePending: false, distanceKm: null as number | null, distanceBy: null as 'route' | 'straight' | null, source: 'pickup' as const,
 };
 
-export async function quote(db: Db, storeId: string, items: CreateOrderInput['items'], hoodRef: HoodRef | null, addr: GeoAddress | null = null, pickup = false) {
+export async function quote(
+  db: Db, storeId: string, items: CreateOrderInput['items'], hoodRef: HoodRef | null, addr: GeoAddress | null = null, pickup = false,
+  couponCode = '', phone: string | null = null,
+) {
   const priced = await priceItems(db, storeId, items);
   const settings = await getSettings(db, storeId);
   const subtotal = priced.reduce((s, i) => s + i.lineTotalCents, 0);
@@ -314,6 +320,18 @@ export async function quote(db: Db, storeId: string, items: CreateOrderInput['it
     if (d.hood.min_order_cents != null) minOrder = Math.max(minOrder, d.hood.min_order_cents);
   }
   const savings = priced.reduce((s, i) => s + (i.regularPriceCents - i.unitPriceCents) * i.quantity, 0);
+  // Cupom: erro do cupom não derruba a prévia; volta em couponError para o cliente corrigir.
+  let coupon: AppliedCoupon | null = null;
+  let couponError: string | null = null;
+  if (couponCode.trim()) {
+    try {
+      coupon = await applyCoupon(db, storeId, couponCode, { subtotalCents: subtotal, feeCents: fee, feePending, pickup, phone });
+    } catch (e: any) {
+      if (e?.code !== 'coupon_invalid') throw e;
+      couponError = e.message;
+    }
+  }
+  const discount = coupon?.discountCents ?? 0;
   return {
     items: priced.map(({ trackStock, ...i }) => i),
     subtotalCents: subtotal,
@@ -321,8 +339,10 @@ export async function quote(db: Db, storeId: string, items: CreateOrderInput['it
     deliveryFeePending: feePending,
     deliveryDistanceKm: km,
     deliveryDistanceBy: kmBy,
-    discountCents: 0,
-    totalCents: fee == null ? null : subtotal + fee,
+    discountCents: discount,
+    totalCents: fee == null ? null : subtotal + fee - discount,
+    coupon: coupon && { code: coupon.code, label: coupon.label, description: coupon.description, kind: coupon.kind, discountCents: coupon.discountCents },
+    couponError,
     promoSavingsCents: savings,
     minOrderCents: minOrder,
     belowMinimum: subtotal < minOrder,
@@ -374,7 +394,11 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
       if (subtotal < minOrder) throw badRequest('below_minimum', `O pedido mínimo é de R$ ${(minOrder / 100).toFixed(2).replace('.', ',')}.`);
       // Bairro novo (criado pelo CEP) sem taxa definida: o pedido entra com a taxa "a combinar".
       const { feePending, fee } = delivery;
-      const discount = 0;
+      // Cupom: travado nesta transação para que dois pedidos ao mesmo tempo não passem do limite de usos.
+      const coupon = input.couponCode
+        ? await applyCoupon(db, storeId, input.couponCode, { subtotalCents: subtotal, feeCents: fee, feePending, pickup, phone, lock: true })
+        : null;
+      const discount = Math.min(coupon?.discountCents ?? 0, subtotal + fee);
       const total = subtotal + fee - discount;
 
       let changeFor: number | null = null;
@@ -403,15 +427,15 @@ export async function createOrder(input: CreateOrderInput, storeId: string, ipHa
         `INSERT INTO orders (store_id, number, public_token, idempotency_key, request_hash, customer_name, customer_phone, cep, street,
             street_number, complement, reference, neighborhood_id, neighborhood_name, city, notes, payment_method, change_for_cents,
             subtotal_cents, delivery_fee_cents, discount_cents, total_cents, customer_ip_hash, delivery_fee_pending,
-            delivery_distance_km, delivery_fee_source, fulfillment, delivery_distance_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+            delivery_distance_km, delivery_fee_source, fulfillment, delivery_distance_by, coupon_id, coupon_code)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
          RETURNING *`,
         [
           storeId, number, newToken(24), input.idempotencyKey, hash, cleanText(input.customer.name, 80), phone, cep,
           cleanText(addr?.street ?? '', 120), cleanText(addr?.number ?? '', 15), cleanText(addr?.complement ?? '', 80),
           cleanText(addr?.reference ?? '', 120), hood.id, hood.name, hood.city, cleanText(input.notes, 300),
           input.payment.method, changeFor, subtotal, fee, discount, total, ipHash, feePending,
-          delivery.distanceKm, delivery.source, input.fulfillment, delivery.distanceBy,
+          delivery.distanceKm, delivery.source, input.fulfillment, delivery.distanceBy, coupon?.id ?? null, coupon?.code ?? null,
         ],
       );
       const order = o.rows[0];
