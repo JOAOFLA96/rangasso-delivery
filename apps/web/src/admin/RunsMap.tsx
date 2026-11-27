@@ -4,8 +4,8 @@ import 'leaflet/dist/leaflet.css';
 import { api } from '../lib/api';
 
 // Mapa da tela de Entregas: a loja, a rota de cada saída (traçado do Google) e as paradas numeradas, uma cor por motoboy.
-// Fundo do Google Maps (passa pelo nosso servidor, a chave não vem para a página). Se o Google falhar, troca sozinho para o
-// OpenStreetMap. Saída montada sem o Google não tem pontos e não aparece no mapa.
+// Fundo do Google Maps (Maps JavaScript API, com a chave do mapa travada no endereço do site). Sem essa chave, ou se o Google
+// recusar, troca sozinho para o OpenStreetMap. Saída montada sem o Google não tem pontos e não aparece no mapa.
 
 export interface MapRun {
   id: string; number: number; status: string; courierName: string | null; polyline: string | null;
@@ -15,6 +15,32 @@ export interface MapRun {
 export const RUN_COLORS = ['#c2410c', '#1d4ed8', '#157f3b', '#7c3aed', '#b42318', '#0e7490', '#a16207', '#be185d'];
 
 const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+// Carrega o Google Maps uma vez só. Chave recusada (gm_authFailure) ou script fora do ar: volta para o OpenStreetMap.
+let googleMaps: Promise<void> | null = null;
+let onGoogleFail: (() => void) | null = null;
+function loadGoogleMaps(key: string, onFail: () => void): Promise<void> {
+  onGoogleFail = onFail;
+  (window as any).gm_authFailure = () => {
+    googleMaps = Promise.reject(new Error('chave recusada'));
+    googleMaps.catch(() => {});
+    onGoogleFail?.();
+  };
+  googleMaps ??= new Promise<void>((resolve, reject) => {
+    const cb = '__rangassoMaps';
+    (window as any)[cb] = () => resolve();
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&language=pt-BR&region=BR&callback=${cb}`;
+    s.async = true;
+    s.onerror = () => {
+      googleMaps = null;
+      reject(new Error('Google Maps fora do ar'));
+    };
+    document.head.append(s);
+    setTimeout(() => reject(new Error('Google Maps demorou demais')), 15_000);
+  });
+  return googleMaps;
+}
+
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
 // Polyline codificada do Google (precisão 5).
@@ -47,19 +73,28 @@ export function RunsMap({ runs, store }: { runs: MapRun[]; store: { lat: number;
     if (!el.current || map.current) return;
     map.current = L.map(el.current, { scrollWheelZoom: false }).setView(store ? [store.lat, store.lng] : [-23.09, -47.21], 13);
     const m = map.current;
-    let base: L.TileLayer | null = null;
+    let base: L.GridLayer | null = null;
     let alive = true;
     const useOsm = () => {
       if (!alive || !map.current) return;
       base?.remove();
       base = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(m);
     };
-    const useGoogle = () => {
-      let errors = 0;
-      base = L.tileLayer('/api/admin/map/tiles/{z}/{x}/{y}', { maxZoom: 21, maxNativeZoom: 21, attribution: `Dados do mapa &copy;${new Date().getFullYear()} Google` }).addTo(m);
-      base.on('tileerror', () => { if (++errors === 3) useOsm(); });
+    const useGoogle = async (key: string) => {
+      try {
+        await loadGoogleMaps(key, useOsm);
+        (window as any).L = L; // o plugin procura o Leaflet global
+        const { default: GoogleMutant } = await import('leaflet.gridlayer.googlemutant/src/Leaflet.GoogleMutant.mjs');
+        if (!alive || !map.current) return;
+        base = new GoogleMutant({ type: 'roadmap', maxZoom: 21, styles: [{ featureType: 'poi', stylers: [{ visibility: 'off' }] }] } as any).addTo(m);
+      } catch {
+        useOsm();
+      }
     };
-    api<{ provider: 'google' | 'osm' }>('/api/admin/map').then((r) => (alive ? (r.provider === 'google' ? useGoogle() : useOsm()) : undefined), useOsm);
+    api<{ provider: 'google' | 'osm'; key?: string }>('/api/admin/map').then(
+      (r) => (alive ? (r.provider === 'google' && r.key ? useGoogle(r.key) : useOsm()) : undefined),
+      useOsm,
+    );
     layer.current = L.layerGroup().addTo(m);
     return () => {
       alive = false;

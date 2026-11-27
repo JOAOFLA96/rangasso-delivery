@@ -43,10 +43,13 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org'], // mapa: Google passa pelo nosso servidor; OSM é a reserva
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'self'"],
-        connectSrc: ["'self'", 'https://viacep.com.br'],
+        // Mapa da tela de Entregas: Google Maps (Maps JavaScript API) e o OpenStreetMap de reserva.
+        imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org', 'https://*.googleapis.com', 'https://*.gstatic.com', 'https://*.google.com'],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+        scriptSrc: ["'self'", 'https://maps.googleapis.com'],
+        connectSrc: ["'self'", 'https://viacep.com.br', 'https://maps.googleapis.com'],
+        workerSrc: ["'self'", 'blob:'],
         frameAncestors: ["'none'"],
         upgradeInsecureRequests: isProd ? [] : null,
       },
