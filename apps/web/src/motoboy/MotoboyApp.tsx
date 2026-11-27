@@ -55,30 +55,66 @@ export function PegarPedido() {
   );
 }
 
-// Leitor de QR dentro da página (Android/Chrome). Onde o navegador não lê QR, o motoboy usa a câmera do celular ou digita o número.
-const canScan = () => typeof window !== 'undefined' && 'BarcodeDetector' in window && !!navigator.mediaDevices?.getUserMedia;
-function Scanner({ onCode, onClose }: { onCode: (orderId: string) => void; onClose: () => void }) {
+// Leitor de QR dentro da página. Usa o leitor nativo do navegador quando existe (Android/Chrome) e, no iPhone,
+// decodifica os quadros da câmera com o jsQR. Fica aberto para ler vários cupons em seguida.
+type Detect = (v: HTMLVideoElement) => Promise<string[]>;
+async function makeDetector(): Promise<Detect> {
+  const BD = (window as any).BarcodeDetector;
+  if (BD) {
+    try {
+      const formats: string[] = (await BD.getSupportedFormats?.()) ?? ['qr_code'];
+      if (formats.includes('qr_code')) {
+        const d = new BD({ formats: ['qr_code'] });
+        return async (v) => ((await d.detect(v).catch(() => [])) as any[]).map((c) => String(c.rawValue));
+      }
+    } catch { /* cai no jsQR */ }
+  }
+  const jsQR = (await import('jsqr')).default;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  return async (v) => {
+    if (!v.videoWidth) return [];
+    const scale = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight));
+    canvas.width = Math.round(v.videoWidth * scale);
+    canvas.height = Math.round(v.videoHeight * scale);
+    ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+    return r ? [r.data] : [];
+  };
+}
+
+function Scanner({ onCode, onClose }: { onCode: (orderId: string) => Promise<string>; onClose: () => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [read, setRead] = useState<string[]>([]);
   useEffect(() => {
     let stream: MediaStream | null = null;
     let stop = false;
+    const seen = new Set<string>();
     (async () => {
+      if (!navigator.mediaDevices?.getUserMedia) { setErr('Este navegador não abre a câmera. Digite o número do pedido.'); return; }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
         if (stop) return;
-        video.current!.srcObject = stream;
-        await video.current!.play();
-        const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] });
+        const v = video.current!;
+        v.srcObject = stream;
+        await v.play();
+        const detect = await makeDetector();
         while (!stop) {
-          const codes = await detector.detect(video.current!).catch(() => []);
-          const m = codes.map((c: any) => String(c.rawValue).match(UUID_IN_URL)).find(Boolean);
-          if (m) { onCode(m[1]); return; }
-          if (codes.length) setErr('Esse QR não é de um pedido da loja.');
-          await new Promise((r) => setTimeout(r, 250));
+          const codes = await detect(v);
+          const m = codes.map((c) => c.match(UUID_IN_URL)).find(Boolean);
+          if (m && !seen.has(m[1])) {
+            seen.add(m[1]);
+            setErr(null);
+            navigator.vibrate?.(80);
+            const label = await onCode(m[1]);
+            if (!stop) setRead((r) => [label, ...r]);
+          } else if (!m && codes.length) setErr('Esse QR não é de um pedido da loja.');
+          await new Promise((r) => setTimeout(r, 200));
         }
       } catch {
-        setErr('Não consegui abrir a câmera. Libere a câmera para este site ou digite o número do pedido.');
+        if (!stop) setErr('Não consegui abrir a câmera. Libere a câmera para este site (no iPhone: Ajustes › Safari/Chrome › Câmera) ou digite o número do pedido.');
       }
     })();
     return () => { stop = true; stream?.getTracks().forEach((t) => t.stop()); };
@@ -86,10 +122,11 @@ function Scanner({ onCode, onClose }: { onCode: (orderId: string) => void; onClo
   return (
     <div className="mb-sheet" role="dialog" aria-label="Ler QR do cupom">
       <div className="mb-sheet-body">
-        <strong>Aponte para o QR do cupom</strong>
-        <video ref={video} className="mb-video" muted playsInline />
+        <strong>Aponte para o QR de cada cupom</strong>
+        <video ref={video} className="mb-video" muted playsInline autoPlay />
         {err && <p className="mb-error-text">{err}</p>}
-        <button className="mb-btn mb-ghost" onClick={onClose}>Fechar</button>
+        {read.length > 0 && <ul className="mb-read">{read.map((r, i) => <li key={i}>{r}</li>)}</ul>}
+        <button className="mb-btn mb-primary" onClick={onClose}>{read.length ? 'Pronto, ver minha rota' : 'Fechar'}</button>
       </div>
     </div>
   );
@@ -176,19 +213,25 @@ export default function MotoboyApp() {
   const alertBox = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 6000); };
 
   // Pegar pedido pelo QR do cupom (ou número): entra na saída dele e a rota é refeita no servidor.
-  const claim = useCallback(async (ref: { orderId?: string; number?: number }, confirm = false) => {
+  const claim = useCallback(async (ref: { orderId?: string; number?: number }, confirm = false): Promise<string> => {
     setBusy('claim');
     setSwap(null);
     try {
       const r = await api<{ number: number; already: boolean; from: string | null }>(`/api/courier/${token}/claim`, { method: 'POST', body: { ...ref, confirm } });
       const m = r.already ? `O pedido #${r.number} já está com você.` : `Pedido #${r.number} entrou na sua saída${r.from ? ` (estava com ${r.from})` : ''}. Rota refeita.`;
       setOkMsg(m);
-      setTimeout(() => setOkMsg(null), 6000);
+      setTimeout(() => setOkMsg(null), 15000);
       setNum('');
       await load();
+      return `✅ ${r.already ? `#${r.number} já estava com você` : `#${r.number} na sua rota${r.from ? ` (era do ${r.from})` : ''}`}`;
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'confirm_swap') setSwap({ ref, message: e.message });
-      else alertBox((e as Error).message);
+      if (e instanceof ApiError && e.code === 'confirm_swap') {
+        setScan(false); // a pergunta aparece por cima da página
+        setSwap({ ref, message: e.message });
+        return '⚠️ Confirme a troca';
+      }
+      alertBox((e as Error).message);
+      return `❌ ${(e as Error).message}`;
     } finally {
       setBusy(null);
     }
@@ -199,7 +242,7 @@ export default function MotoboyApp() {
     setParams({}, { replace: true });
     if (/^[0-9a-f-]{36}$/i.test(fromQr)) claim({ orderId: fromQr });
   }, [fromQr, claim, setParams]);
-  const onScan = useCallback((orderId: string) => { setScan(false); claim({ orderId }); }, [claim]);
+  const onScan = useCallback((orderId: string) => claim({ orderId }), [claim]);
 
   if (error && !page) return <main className="mb"><div className="mb-card mb-error">{error.includes('não encontrado') ? 'Link inválido ou desativado. Peça um link novo para a loja.' : error}</div></main>;
   if (!page) return <main className="mb"><p className="mb-muted">Carregando…</p></main>;
@@ -217,13 +260,17 @@ export default function MotoboyApp() {
         <div><strong>Olá, {page.courier.name}</strong><span className="mb-muted">Minhas entregas</span></div>
       </header>
       {msg && <div className="mb-card mb-error" role="alert">{msg}</div>}
-      {okMsg && <div className="mb-card mb-success" role="status">{okMsg}</div>}
+      {okMsg && (
+        <div className="mb-card mb-success" role="status">
+          {okMsg}
+          {run?.mapsUrl && <a className="mb-btn mb-secondary" href={run.mapsUrl} target="_blank" rel="noreferrer">🗺️ Abrir a rota no Google Maps</a>}
+        </div>
+      )}
 
       <section className="mb-card mb-claim">
         <strong>Pegou pedido no balcão?</strong>
-        {canScan()
-          ? <button className="mb-btn mb-primary" disabled={busy === 'claim'} onClick={() => setScan(true)}>📷 Ler QR do cupom</button>
-          : <p className="mb-muted small">Leia o QR do cupom com a câmera do celular, ou digite o número do pedido.</p>}
+        <button className="mb-btn mb-primary" onClick={() => setScan(true)}>📷 Ler QR dos cupons</button>
+        <p className="mb-muted small">Leia o QR de cada marmita que pegou: o pedido entra na sua rota e o Maps já monta o caminho. Sem câmera, digite o número.</p>
         <form className="mb-claim-row" onSubmit={(e) => { e.preventDefault(); const n = Number(num.replace(/\D/g, '')); if (n) claim({ number: n }); }}>
           <input inputMode="numeric" aria-label="Número do pedido" placeholder="Nº do pedido" value={num} onChange={(e) => setNum(e.target.value.replace(/\D/g, '').slice(0, 8))} />
           <button className="mb-btn mb-secondary" disabled={!num || busy === 'claim'}>Pegar</button>
