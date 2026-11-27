@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { api } from '../lib/api';
 
 // Mapa da tela de Entregas: a loja, a rota de cada saída (traçado do Google) e as paradas numeradas, uma cor por motoboy.
-// Fundo do OpenStreetMap (grátis, sem chave). Saída montada sem o Google não tem pontos e não aparece no mapa.
+// Fundo do Google Maps (passa pelo nosso servidor, a chave não vem para a página). Se o Google falhar, troca sozinho para o
+// OpenStreetMap. Saída montada sem o Google não tem pontos e não aparece no mapa.
 
 export interface MapRun {
   id: string; number: number; status: string; courierName: string | null; polyline: string | null;
@@ -44,9 +46,23 @@ export function RunsMap({ runs, store }: { runs: MapRun[]; store: { lat: number;
   useEffect(() => {
     if (!el.current || map.current) return;
     map.current = L.map(el.current, { scrollWheelZoom: false }).setView(store ? [store.lat, store.lng] : [-23.09, -47.21], 13);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map.current);
-    layer.current = L.layerGroup().addTo(map.current);
+    const m = map.current;
+    let base: L.TileLayer | null = null;
+    let alive = true;
+    const useOsm = () => {
+      if (!alive || !map.current) return;
+      base?.remove();
+      base = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(m);
+    };
+    const useGoogle = () => {
+      let errors = 0;
+      base = L.tileLayer('/api/admin/map/tiles/{z}/{x}/{y}', { maxZoom: 21, maxNativeZoom: 21, attribution: `Dados do mapa &copy;${new Date().getFullYear()} Google` }).addTo(m);
+      base.on('tileerror', () => { if (++errors === 3) useOsm(); });
+    };
+    api<{ provider: 'google' | 'osm' }>('/api/admin/map').then((r) => (alive ? (r.provider === 'google' ? useGoogle() : useOsm()) : undefined), useOsm);
+    layer.current = L.layerGroup().addTo(m);
     return () => {
+      alive = false;
       map.current?.remove();
       map.current = null;
     };

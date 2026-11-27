@@ -25,6 +25,7 @@ import { adminUserRoutes } from './routes/admin/users.js';
 import { adminLabelRoutes } from './routes/admin/labels.js';
 import { adminDeliveryRoutes } from './routes/admin/deliveries.js';
 import { adminCouponRoutes } from './routes/admin/coupons.js';
+import { adminMapRoutes } from './routes/admin/map.js';
 import { courierRoutes } from './routes/courier.js';
 
 export async function buildApp(opts: { logger?: boolean } = {}) {
@@ -42,7 +43,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org'], // mapa da tela de Entregas
+        imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org'], // mapa: Google passa pelo nosso servidor; OSM é a reserva
         styleSrc: ["'self'", "'unsafe-inline'"],
         scriptSrc: ["'self'"],
         connectSrc: ["'self'", 'https://viacep.com.br'],
@@ -51,6 +52,8 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       },
     },
     hsts: isProd ? { maxAge: 31536000 } : false,
+    // O OpenStreetMap bloqueia (403) pedidos de mapa sem Referer; manda só a origem do site para fora, nunca o caminho.
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   });
   await app.register(cookie);
   await app.register(rateLimit, { max: config.GLOBAL_RATE_LIMIT, timeWindow: '1 minute' });
@@ -104,6 +107,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       await admin.register(adminLabelRoutes);
       await admin.register(adminDeliveryRoutes);
       await admin.register(adminCouponRoutes);
+      await admin.register(adminMapRoutes);
     },
     { prefix: '/api/admin' },
   );
