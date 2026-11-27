@@ -3,7 +3,8 @@ import { api, brl, formatDateTime, formatTime, maskPhone } from '../lib/api';
 import { PAYMENT, STATUS, fmtPhone, type Status } from './labels';
 import { useLiveEvents } from './live';
 import { canManage, useSession } from './session';
-import { Confirm, Modal, errorText, useToast } from './ui';
+import { Confirm, Modal, Toggle, errorText, useToast } from './ui';
+import { RUN_COLORS, RunsMap } from './RunsMap';
 
 // Entregas: junta pedidos numa saída do motoboy, o Google ordena as paradas (saindo e voltando à loja) e o motoboy recebe a
 // rota no celular (link do Google Maps e mensagem pronta para WhatsApp). Depois, baixa de cada entrega e resumo por motoboy.
@@ -17,13 +18,14 @@ interface Stop {
   orderId: string; number: number; status: Status; position: number; customerName: string; customerPhone: string; street: string; streetNumber: string;
   complement: string; reference: string; neighborhood: string; paymentMethod: keyof typeof PAYMENT; changeForCents: number | null; totalCents: number;
   legDistanceM: number | null; legDurationS: number | null; etaOffsetS: number | null; outcome: 'delivered' | 'not_delivered' | null; outcomeNote: string;
-  outcomeAt: string | null; address: string;
+  outcomeAt: string | null; address: string; lat: number | null; lng: number | null;
 }
 interface Run {
-  id: string; number: number; status: 'planned' | 'out' | 'done' | 'cancelled'; courierId: string | null; courierName: string | null; courierPhone: string | null;
+  id: string; number: number; status: 'planned' | 'out' | 'done' | 'cancelled'; auto?: boolean; polyline: string | null; courierId: string | null; courierName: string | null; courierPhone: string | null;
   routeBy: 'google' | 'google_manual' | 'distance'; routeError: string | null; totalDistanceM: number | null; totalDurationS: number | null;
   createdAt: string; departedAt: string | null; finishedAt: string | null; stops: Stop[]; mapsUrl: string | null;
 }
+interface DispatchSettings { autoDispatch: boolean; autoDispatchMax: number; store: { lat: number; lng: number } | null }
 interface SummaryRow {
   courier_id: string | null; courier_name: string; runs: number; delivered: number; not_delivered: number; delivery_fees_cents: number;
   planned_distance_m: number; avg_ride_min: number | null; avg_total_min: number | null; avg_cycle_min: number | null;
@@ -67,6 +69,7 @@ export function DeliveriesTab() {
   const [maxStops, setMaxStops] = useState(10);
   const [runs, setRuns] = useState<Run[]>([]);
   const [couriers, setCouriers] = useState<Courier[]>([]);
+  const [disp, setDisp] = useState<DispatchSettings | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [courierId, setCourierId] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -77,15 +80,17 @@ export function DeliveriesTab() {
 
   const load = useCallback(async () => {
     try {
-      const [a, r, c] = await Promise.all([
+      const [a, r, c, d] = await Promise.all([
         api<{ orders: Available[]; google: boolean; maxStops: number }>('/api/admin/deliveries/available'),
         api<{ runs: Run[] }>('/api/admin/delivery-runs'),
         api<{ couriers: Courier[] }>('/api/admin/couriers'),
+        api<DispatchSettings>('/api/admin/deliveries/settings'),
       ]);
+      setDisp(d);
       setAvailable(a.orders);
       setGoogle(a.google);
       setMaxStops(a.maxStops);
-      setRuns(r.runs);
+      setRuns([...r.runs].sort((x, y) => x.number - y.number));
       setCouriers(c.couriers);
       setVersion((v) => v + 1);
       setPicked((p) => new Set([...p].filter((id) => a.orders.some((o) => o.id === id))));
@@ -146,6 +151,51 @@ export function DeliveriesTab() {
       {error && <div className="alert alert-error">{error} <button className="btn btn-link" onClick={load}>Tentar de novo</button></div>}
       {!google && <div className="alert alert-warning">Sem a chave do Google Maps, a ordem das paradas é aproximada (pela distância de cada pedido até a loja).</div>}
 
+      <section className="card dl-auto">
+        <div className="a-row wrap">
+          <Toggle checked={!!disp?.autoDispatch} disabled={!disp || !canManage(user)} label={`Distribuir automaticamente: pedido aceito entra na saída de um motoboy (até ${disp?.autoDispatchMax ?? 5} por saída)`}
+            onChange={(v) => disp && act('disp', () => api('/api/admin/deliveries/settings', { method: 'PUT', body: { autoDispatch: v, autoDispatchMax: disp.autoDispatchMax } }), v ? 'Distribuição automática ligada' : 'Distribuição automática desligada')} />
+          {canManage(user) && disp && (
+            <label className="inline-field"><span>Máximo por saída</span>
+              <select value={disp.autoDispatchMax} onChange={(e) => act('disp', () => api('/api/admin/deliveries/settings', { method: 'PUT', body: { autoDispatch: disp.autoDispatch, autoDispatchMax: Number(e.target.value) } }), 'Limite salvo')}>
+                {Array.from({ length: maxStops }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+          )}
+          <button className="btn btn-secondary btn-sm" disabled={busy === 'auto' || !available.length} onClick={() => act('auto', () => api('/api/admin/deliveries/auto', { method: 'POST' }), 'Pedidos distribuídos')}>Distribuir agora</button>
+        </div>
+        <p className="muted small">Entram sozinhos os pedidos de entrega aceitos (Confirmado, Em preparo ou Saiu). A saída fica montada esperando você clicar em “Motoboy saiu”. Você pode passar pedidos de um motoboy para outro à mão, e aí pode passar do limite.</p>
+      </section>
+
+      <section className="card dl-board">
+        <h3>Motoboys agora</h3>
+        {!couriers.length && <p className="muted">Nenhum motoboy cadastrado.</p>}
+        <ul className="dl-board-list">
+          {activeCouriers.map((c) => {
+            const run = runs.find((r) => r.courierId === c.id);
+            const idx = run ? runs.indexOf(run) : -1;
+            const left = run ? run.stops.filter((s) => !s.outcome && s.status !== 'cancelled').length : 0;
+            return (
+              <li key={c.id} className={`dl-board-item ${run ? run.status : 'free'}`}>
+                <span className="dl-dot" style={{ background: run ? RUN_COLORS[idx % RUN_COLORS.length] : '#cfc9c4' }} />
+                <strong>{c.name}</strong>
+                {!run && <span className="pill pill-sm s-done">Livre</span>}
+                {run?.status === 'planned' && <span className="pill pill-sm s-preparing">Saída #{run.number} · {run.stops.length} entrega(s) esperando sair</span>}
+                {run?.status === 'out' && <span className="pill pill-sm s-out">Na rua desde {formatTime(run.departedAt!)} · faltam {left} de {run.stops.length}</span>}
+              </li>
+            );
+          })}
+          {runs.filter((r) => !r.courierId).map((r) => (
+            <li key={r.id} className="dl-board-item nocourier">
+              <span className="dl-dot" style={{ background: RUN_COLORS[runs.indexOf(r) % RUN_COLORS.length] }} />
+              <strong>Saída #{r.number}</strong> <span className="pill pill-sm dl-retry">sem motoboy · {r.stops.length} entrega(s)</span>
+            </li>
+          ))}
+        </ul>
+        {runs.length > 0 && <RunsMap runs={runs} store={disp?.store ?? null} />}
+        {runs.some((r) => !r.polyline) && <p className="muted small">Saídas montadas sem o Google não aparecem no mapa.</p>}
+      </section>
+
       <section className="card dl-pool">
         <div className="a-block-head">
           <h3>Pedidos para entregar</h3>
@@ -194,7 +244,10 @@ export function DeliveriesTab() {
       <h3 className="dl-h">Saídas em andamento</h3>
       {!runs.length && <p className="muted">Nenhuma saída em andamento.</p>}
       {runs.map((run) => (
-        <RunCard key={run.id} run={run} couriers={activeCouriers} busy={busy} picked={[...picked]}
+        <RunCard key={run.id} run={run} color={RUN_COLORS[runs.indexOf(run) % RUN_COLORS.length]} others={runs.filter((r) => r.id !== run.id && r.status === 'planned')}
+          freeCouriers={activeCouriers.filter((c) => !busyCouriers.has(c.id))}
+          onMoveTo={(s, target) => act(`stops-${run.id}`, () => api(`/api/admin/delivery-runs/${run.id}/stops/${s.orderId}/move`, { body: target }), `Pedido #${s.number} passado`)}
+          couriers={activeCouriers} busy={busy} picked={[...picked]}
           onCourier={(id) => act(`c-${run.id}`, () => api(`/api/admin/delivery-runs/${run.id}`, { method: 'PUT', body: { courierId: id || null } }), 'Motoboy alterado')}
           onMove={(i, d) => move(run, i, d)}
           onRemove={(s) => setStops(run, run.stops.filter((x) => x.orderId !== s.orderId).map((x) => x.orderId), false)}
@@ -223,8 +276,9 @@ export function DeliveriesTab() {
   );
 }
 
-function RunCard({ run, couriers, busy, picked, onCourier, onMove, onRemove, onAddPicked, onOptimize, onCancel, onDepart, onDelivered, onNotDelivered, onFinish }: {
-  run: Run; couriers: Courier[]; busy: string | null; picked: string[];
+function RunCard({ run, color, others, freeCouriers, onMoveTo, couriers, busy, picked, onCourier, onMove, onRemove, onAddPicked, onOptimize, onCancel, onDepart, onDelivered, onNotDelivered, onFinish }: {
+  run: Run; color: string; others: Run[]; freeCouriers: Courier[]; onMoveTo: (s: Stop, target: { toRunId?: string; courierId?: string | null }) => void;
+  couriers: Courier[]; busy: string | null; picked: string[];
   onCourier: (id: string) => void; onMove: (i: number, d: -1 | 1) => void; onRemove: (s: Stop) => void; onAddPicked: () => void; onOptimize: () => void;
   onCancel: () => void; onDepart: () => void; onDelivered: (s: Stop) => void; onNotDelivered: (s: Stop) => void; onFinish: () => void;
 }) {
@@ -239,7 +293,7 @@ function RunCard({ run, couriers, busy, picked, onCourier, onMove, onRemove, onA
   return (
     <section className={`card dl-run ${run.status}`}>
       <div className="a-block-head">
-        <h3>Saída #{run.number} {run.status === 'out' ? <span className="pill pill-sm s-out">Na rua desde {formatTime(run.departedAt!)}</span> : <span className="pill pill-sm s-preparing">Montando</span>}</h3>
+        <h3><span className="dl-dot" style={{ background: color }} />Saída #{run.number}{run.auto ? <span className="pill pill-sm">automática</span> : null} {run.status === 'out' ? <span className="pill pill-sm s-out">Na rua desde {formatTime(run.departedAt!)}</span> : <span className="pill pill-sm s-preparing">Montando</span>}</h3>
         {run.totalDistanceM != null && <span className="muted small">{km(run.totalDistanceM)} ida e volta · {min(run.totalDurationS)} de direção</span>}
       </div>
       <p className={`small ${run.routeBy === 'distance' ? 'dl-warn' : 'muted'}`}>{routeNote}{run.routeError ? ` (Google: ${run.routeError})` : ''}. Tempo sem contar a parada em cada cliente.</p>
@@ -278,6 +332,19 @@ function RunCard({ run, couriers, busy, picked, onCourier, onMove, onRemove, onA
                 <>
                   <button className="btn btn-ghost btn-sm" aria-label="Subir" disabled={working || i === 0} onClick={() => onMove(i, -1)}>↑</button>
                   <button className="btn btn-ghost btn-sm" aria-label="Descer" disabled={working || i === run.stops.length - 1} onClick={() => onMove(i, 1)}>↓</button>
+                  {(others.length > 0 || freeCouriers.length > 0 || run.stops.length > 1) && (
+                    <select className="dl-move" aria-label={`Passar pedido #${s.number} para`} value="" disabled={working}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v.startsWith('run:')) onMoveTo(s, { toRunId: v.slice(4) });
+                        else if (v.startsWith('new:')) onMoveTo(s, { courierId: v.slice(4) || null });
+                      }}>
+                      <option value="">Passar para…</option>
+                      {others.map((o) => <option key={o.id} value={`run:${o.id}`}>Saída #{o.number} · {o.courierName ?? 'sem motoboy'} ({o.stops.length})</option>)}
+                      {freeCouriers.map((c) => <option key={c.id} value={`new:${c.id}`}>Nova saída com {c.name}</option>)}
+                      {run.stops.length > 1 && <option value="new:">Nova saída sem motoboy</option>}
+                    </select>
+                  )}
                   <button className="btn btn-ghost btn-sm" aria-label={`Tirar pedido #${s.number}`} disabled={working || run.stops.length === 1} onClick={() => onRemove(s)}>✕</button>
                 </>
               )}

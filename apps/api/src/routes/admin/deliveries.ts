@@ -10,7 +10,7 @@ import { requireRole } from '../../auth.js';
 import { notifyOrder, pushForStatus } from '../../services/push.js';
 import { tripPlannerEnabled } from '../../services/google.js';
 import {
-  ACTIVE_RUNS_WHERE, AVAILABLE_SQL, MAX_STOPS, cancelRun, createRun, departRun, finishRun, listRuns, stopOutcome, updateRun,
+  ACTIVE_RUNS_WHERE, AVAILABLE_SQL, MAX_STOPS, autoDispatch, cancelRun, moveStop, createRun, departRun, finishRun, listRuns, stopOutcome, updateRun,
 } from '../../services/deliveryRuns.js';
 
 const uuid = z.string().uuid();
@@ -59,6 +59,28 @@ export async function adminDeliveryRoutes(app: FastifyInstance) {
     return { orders: r.rows, maxStops: MAX_STOPS, google: tripPlannerEnabled() };
   });
 
+  // ---- Distribuição automática ----
+  app.get('/deliveries/settings', async (req) => {
+    const s = (await pool.query('SELECT auto_dispatch, auto_dispatch_max, store_lat, store_lng FROM store_settings WHERE store_id = $1', [req.admin!.storeId])).rows[0];
+    return { autoDispatch: s.auto_dispatch, autoDispatchMax: s.auto_dispatch_max, store: s.store_lat != null ? { lat: s.store_lat, lng: s.store_lng } : null };
+  });
+  app.put('/deliveries/settings', { preHandler: requireRole('owner', 'manager') }, async (req) => {
+    const b = parse(z.object({ autoDispatch: z.boolean(), autoDispatchMax: z.number().int().min(1).max(MAX_STOPS) }), req.body);
+    const storeId = req.admin!.storeId;
+    await pool.query('UPDATE store_settings SET auto_dispatch = $2, auto_dispatch_max = $3, updated_at = now() WHERE store_id = $1', [storeId, b.autoDispatch, b.autoDispatchMax]);
+    await audit(pool, actor(req), 'settings.auto_dispatch', 'store_settings', storeId, b);
+    if (b.autoDispatch) for (const runId of await autoDispatch(tx, pool, storeId)) runEvent(storeId, runId);
+    return { ok: true };
+  });
+  // "Distribuir agora": coloca nas saídas os pedidos aceitos que estão sem motoboy (mesma regra do automático).
+  app.post('/deliveries/auto', async (req) => {
+    const storeId = req.admin!.storeId;
+    const touched = await autoDispatch(tx, pool, storeId, true);
+    for (const runId of touched) runEvent(storeId, runId);
+    await audit(pool, actor(req), 'delivery_run.auto', 'store_settings', storeId, { runs: touched.length });
+    return { runs: touched.length };
+  });
+
   // ---- Saídas ----
   app.get('/delivery-runs', async (req) => {
     const q = parse(z.object({ date: day.optional(), from: day.optional(), to: day.optional(), courierId: uuid.optional() }), req.query);
@@ -92,6 +114,19 @@ export async function adminDeliveryRoutes(app: FastifyInstance) {
     await audit(pool, actor(req), 'delivery_run.update', 'delivery_run', id, { courierId: b.courierId, orders: b.orderIds?.length, optimize: b.optimize });
     runEvent(storeId, id);
     return r;
+  });
+
+  // Operador passa um pedido para outra saída (ou para uma nova, com o motoboy escolhido). Aqui pode passar do limite automático.
+  app.post<{ Params: { id: string; orderId: string } }>('/delivery-runs/:id/stops/:orderId/move', async (req) => {
+    const id = parse(uuid, req.params.id);
+    const orderId = parse(uuid, req.params.orderId);
+    const b = parse(z.object({ toRunId: uuid.optional(), courierId: uuid.nullable().optional() }), req.body);
+    const storeId = req.admin!.storeId;
+    const r = await moveStop(tx, pool, storeId, req.admin!.userId, id, orderId, { runId: b.toRunId, courierId: b.courierId ?? null });
+    await audit(pool, actor(req), 'delivery_run.move', 'order', orderId, { from: id, to: r.toId });
+    runEvent(storeId, id);
+    runEvent(storeId, r.toId);
+    return { ok: true, toRunId: r.toId };
   });
 
   app.post<{ Params: { id: string } }>('/delivery-runs/:id/cancel', async (req) => {

@@ -11,6 +11,7 @@ import { ORDER_STATUSES, changeStatus, getOrderDetail } from '../../services/ord
 import { createPrintJob, resolveJob } from '../../services/print.js';
 import { imageUrl } from '../../services/menu.js';
 import { notifyOrder, pushForStatus } from '../../services/push.js';
+import { autoDispatch } from '../../services/deliveryRuns.js';
 
 const listQuery = z.object({
   q: z.string().max(80).optional(),
@@ -97,6 +98,14 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     const row = (await pool.query('SELECT public_token, fulfillment FROM orders WHERE id = $1', [id])).rows[0];
     const msg = row && pushForStatus(r.number, r.from, body.status, row.public_token, row.fulfillment);
     if (msg) notifyOrder(id, msg).catch((e) => req.log.warn({ err: e }, 'falha ao enviar aviso push'));
+    // Pedido de entrega aceito: entra sozinho numa saída de motoboy (se a distribuição automática estiver ligada).
+    if (row?.fulfillment === 'delivery' && ['confirmed', 'preparing', 'out_for_delivery'].includes(body.status)) {
+      try {
+        for (const runId of await autoDispatch(tx, pool, admin.storeId)) emitStoreEvent(admin.storeId, { type: 'run.updated', runId });
+      } catch (e) {
+        req.log.warn({ err: e }, 'falha na distribuição automática');
+      }
+    }
     return { ok: true };
   });
 
