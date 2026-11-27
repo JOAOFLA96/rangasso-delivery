@@ -118,4 +118,50 @@ describe('página do motoboy', () => {
     expect((await courierApi('POST', `/${token}/claim`, {})).statusCode).toBe(400);
     expect((await courierApi('POST', `/${token}/claim`, { number: 999999 })).statusCode).toBe(404);
   });
+  it('QR lido em qualquer ordem: a rota do motoboy é reordenada pela melhor sequência do Google', async () => {
+    // Google falso: a melhor ordem é a da rua com nome "maior" primeiro (Rua C, Rua B, Rua A).
+    const asked: boolean[] = [];
+    setTripPlanner(async (_o, stops, optimize) => {
+      asked.push(optimize);
+      const order = stops.map((_, i) => i).sort((x, y) => (optimize ? stops[y].localeCompare(stops[x]) : x - y));
+      return { order, meters: 1000, seconds: 300, legs: [...stops, 'v'].map(() => ({ meters: 500, seconds: 100 })) };
+    });
+    await pool.query('UPDATE store_settings SET auto_dispatch = false');
+    const carlos = (await admin('POST', '/couriers', owner, { name: 'Carlos' })).json().id;
+    const token = (await admin('POST', `/couriers/${carlos}/link`, owner)).json().accessToken as string;
+    const a = await newOrder('Rua A');
+    const b = await newOrder('Rua B');
+    const c = await newOrder('Rua C');
+    for (const o of [a, c, b]) expect((await courierApi('POST', `/${token}/claim`, { orderId: o.id, confirm: true })).statusCode).toBe(200);
+    const run = (await courierApi('GET', `/${token}`)).json().runs[0];
+    expect(run.stops.map((s: any) => s.number)).toEqual([c.number, b.number, a.number]);
+    expect(asked).toContain(true);
+    // O link do Google Maps segue a mesma ordem otimizada.
+    const u = new URL(run.mapsUrl as string);
+    const seq = [...(u.searchParams.get('waypoints') ?? '').split('|'), u.searchParams.get('destination')!].map((x) => x.split(',')[0]);
+    expect(seq).toEqual(['Rua C', 'Rua B', 'Rua A']);
+  });
+  it('rota de ida e volta: fica com o sentido que entrega mais cedo (mais perto primeiro)', async () => {
+    // Paradas numa linha saindo da loja: Rua A a 1 min, Rua B a 2 min, Rua C a 3 min. O "Google" devolve o sentido C, B, A.
+    const pos = (addr: string) => ({ A: 1, B: 2, C: 3 } as Record<string, number>)[addr.split(',')[0].slice(-1)];
+    let calls = 0;
+    setTripPlanner(async (_o, stops, optimize) => {
+      calls++;
+      const order = optimize ? stops.map((_, i) => i).sort((x, y) => pos(stops[y]) - pos(stops[x])) : stops.map((_, i) => i);
+      const seq = [0, ...order.map((i) => pos(stops[i])), 0];
+      const legs = seq.slice(1).map((p, i) => ({ meters: 1000, seconds: Math.abs(p - seq[i]) * 60 }));
+      return { order, meters: 1000, seconds: legs.reduce((a, l) => a + l.seconds, 0), legs };
+    });
+    await pool.query('UPDATE store_settings SET auto_dispatch = false');
+    const carlos = (await admin('POST', '/couriers', owner, { name: 'Carlos' })).json().id;
+    const token = (await admin('POST', `/couriers/${carlos}/link`, owner)).json().accessToken as string;
+    const c = await newOrder('Rua C');
+    const a = await newOrder('Rua A');
+    const b = await newOrder('Rua B');
+    for (const o of [c, a, b]) await courierApi('POST', `/${token}/claim`, { orderId: o.id, confirm: true });
+    const run = (await courierApi('GET', `/${token}`)).json().runs[0];
+    expect(run.stops.map((s: any) => s.number)).toEqual([a.number, b.number, c.number]);
+    expect(run.stops.map((s: any) => s.etaOffsetS)).toEqual([60, 120, 180]);
+    expect(calls).toBeGreaterThan(1);
+  });
 });
