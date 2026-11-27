@@ -21,6 +21,7 @@ const listQuery = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   active: z.enum(['1', '0']).optional(),
+  coupon: z.string().trim().max(30).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -46,13 +47,14 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     if (q.active === '1') where.push(`o.status NOT IN ('completed','cancelled')`);
     if (q.printStatus) add('o.print_status = ?', q.printStatus);
     if (q.payment) add('o.payment_method = ?', q.payment);
+    if (q.coupon) add('o.coupon_code = upper(?)', q.coupon);
     // Datas no fuso da loja.
     if (q.from) add(`o.created_at >= (?::date)::timestamp AT TIME ZONE (SELECT timezone FROM store_settings WHERE store_id = $1)`, q.from);
     if (q.to) add(`o.created_at < ((?::date) + 1)::timestamp AT TIME ZONE (SELECT timezone FROM store_settings WHERE store_id = $1)`, q.to);
     params.push(q.limit, q.offset);
     const rows = await pool.query(
       `SELECT o.id, o.number, o.status, o.print_status, o.customer_name, o.customer_phone, o.neighborhood_name, o.street, o.street_number,
-              o.complement, o.payment_method, o.change_for_cents, o.subtotal_cents, o.delivery_fee_cents, o.delivery_fee_pending, o.discount_cents, o.total_cents,
+              o.complement, o.payment_method, o.change_for_cents, o.subtotal_cents, o.delivery_fee_cents, o.delivery_fee_pending, o.discount_cents, o.total_cents, o.coupon_code,
               o.created_at, o.updated_at, o.notes, o.fulfillment,
               (SELECT coalesce(sum(quantity),0)::int FROM order_items WHERE order_id = o.id) AS item_count,
               count(*) OVER()::int AS total_count

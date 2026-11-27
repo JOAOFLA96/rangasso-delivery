@@ -8,7 +8,7 @@ import { useToast } from './ui';
 export interface OrderRow {
   id: string; number: number; status: Status; print_status: PrintStatus; customer_name: string; customer_phone: string;
   neighborhood_name: string; fulfillment?: 'delivery' | 'pickup'; street: string; street_number: string; complement: string; payment_method: keyof typeof PAYMENT;
-  change_for_cents: number | null; total_cents: number; created_at: string; item_count: number; notes: string;
+  change_for_cents: number | null; total_cents: number; created_at: string; item_count: number; notes: string; coupon_code?: string | null; discount_cents?: number;
 }
 
 interface Filters { q: string; status: string; printStatus: string; payment: string; from: string; to: string }
@@ -169,6 +169,7 @@ export function OrdersTab() {
                     <div className="oc-mid">
                       <span className="oc-name">{o.customer_name}</span>
                       {o.fulfillment === 'pickup' ? <span className="pill pill-sm pill-pickup">🛍️ Retirada</span> : <span className="muted">{o.neighborhood_name}</span>}
+                      {o.coupon_code && <span className="pill pill-sm pill-pickup" title={`Desconto ${brl(o.discount_cents ?? 0)}`}>🏷️ {o.coupon_code}</span>}
                     </div>
                     <div className="oc-bottom">
                       <span>{o.item_count} {o.item_count === 1 ? 'item' : 'itens'} · <strong>{brl(o.total_cents)}</strong> · {PAYMENT[o.payment_method]}</span>

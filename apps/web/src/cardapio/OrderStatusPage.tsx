@@ -92,7 +92,7 @@ export function OrderStatusPage({ store }: { store: StoreInfo }) {
           <div className="totals">
             <div><span>Subtotal</span><span>{brl(order.subtotalCents)}</span></div>
             {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{order.deliveryDistanceKm != null ? ` (${order.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : ''}</span><span>{order.deliveryFeePending ? 'a combinar' : brl(order.deliveryFeeCents)}</span></div>}
-            {order.discountCents > 0 && <div><span>Desconto</span><span>− {brl(order.discountCents)}</span></div>}
+            {order.discountCents > 0 && <div><span>Desconto{order.couponCode ? ` (cupom ${order.couponCode})` : ''}</span><span>− {brl(order.discountCents)}</span></div>}
             <div className="total"><span>{order.deliveryFeePending ? 'Total (sem a taxa)' : 'Total'}</span><strong>{brl(order.totalCents)}</strong></div>
           </div>
           <p><strong>Pagamento:</strong> {order.payment}{order.changeForCents ? ` · troco para ${brl(order.changeForCents)}` : ''}</p>

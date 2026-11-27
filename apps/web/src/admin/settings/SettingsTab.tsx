@@ -7,6 +7,7 @@ import { StoreSettings } from './StoreSettings';
 import { UsersSettings } from './UsersSettings';
 import { AuditLog } from './AuditLog';
 import { MyAccount } from './MyAccount';
+import { CouponsSettings } from './CouponsSettings';
 
 export function SettingsTab() {
   const { user } = useSession();
@@ -14,6 +15,7 @@ export function SettingsTab() {
   const items = [
     ['cardapio', 'Cardápio'],
     ['entrega', 'Entrega e horários'],
+    ['cupons', 'Cupons'],
     ['impressora', 'Impressora'],
     ...(manage ? [['loja', 'Dados da loja'], ['auditoria', 'Auditoria']] : []),
     ...(user.role === 'owner' ? [['usuarios', 'Usuários']] : []),
@@ -29,6 +31,7 @@ export function SettingsTab() {
         <Routes>
           <Route path="cardapio" element={<MenuSettings />} />
           <Route path="entrega" element={<DeliverySettings />} />
+          <Route path="cupons" element={<CouponsSettings />} />
           <Route path="impressora" element={<PrinterSettings />} />
           <Route path="loja" element={<StoreSettings />} />
           <Route path="usuarios" element={<UsersSettings />} />

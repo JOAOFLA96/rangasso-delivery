@@ -13,7 +13,7 @@ import { WEEKDAY_NAMES_PT } from '../services/storeHours.js';
 import { savePushSubscription, vapidKeys } from '../services/push.js';
 import { processImage, storeImage } from '../lib/uploads.js';
 import { AppError, badRequest } from '../lib/errors.js';
-import { cleanText } from '../lib/text.js';
+import { cleanText, normalizePhone } from '../lib/text.js';
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{20,64}$/;
 
@@ -82,11 +82,15 @@ export async function publicRoutes(app: FastifyInstance) {
           street: z.string().trim().max(120), number: z.string().trim().max(15), city: z.string().trim().max(80),
           state: z.string().trim().max(30).optional().default(''), cep: z.string().max(12).optional().default(''),
         }).nullable().optional(),
+        couponCode: z.string().trim().max(30).optional().default(''),
+        // Telefone (opcional) para conferir o limite de usos do cupom por cliente já na prévia.
+        phone: z.string().max(25).nullable().optional(),
       }),
       req.body,
     );
     const addr = body.address && body.address.street.length >= 2 && body.address.city ? body.address : null;
-    return quote(pool, await currentStoreId(), body.items, { id: body.neighborhoodId, name: body.neighborhoodName, city: body.city }, addr, body.fulfillment === 'pickup');
+    return quote(pool, await currentStoreId(), body.items, { id: body.neighborhoodId, name: body.neighborhoodName, city: body.city }, addr, body.fulfillment === 'pickup',
+      body.couponCode, body.phone ? normalizePhone(body.phone) : null);
   });
 
   app.post('/orders', { config: { rateLimit: { max: config.ORDER_RATE_LIMIT, timeWindow: '5 minutes' } } }, async (req, reply) => {
@@ -125,6 +129,7 @@ export async function publicRoutes(app: FastifyInstance) {
       deliveryDistanceKm: o.delivery_distance_km == null ? null : Number(o.delivery_distance_km),
       deliveryDistanceBy: o.delivery_distance_by ?? null,
       discountCents: o.discount_cents,
+      couponCode: o.coupon_code ?? null,
       totalCents: o.total_cents,
       payment: PAYMENT_LABELS[o.payment_method],
       changeForCents: o.change_for_cents,

@@ -221,3 +221,11 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 
 /* Taxa por km: endereço achado pelo CEP */
 .address-found { background: var(--ok-soft, #eef8f0); border-radius: 10px; padding: 10px 12px; margin: 4px 0 12px; line-height: 1.4; }
+
+/* Cupom de desconto no checkout */
+.coupon-box { margin: 12px 0; }
+.coupon-row { display: flex; gap: 8px; }
+.coupon-row input { flex: 1; min-width: 0; text-transform: uppercase; letter-spacing: .04em; }
+.coupon-row .btn { flex: none; }
+.coupon-applied { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 10px; background: #e8f7ee; color: #14532d; border: 1px dashed #22c55e; }
+.discount-line { color: #15803d; font-weight: 600; }

@@ -7,7 +7,8 @@ import { CartLines } from './CartSheet';
 import { StoreHeader } from './Header';
 import { enablePush, pushSupported, rememberOrder } from './orderStore';
 
-interface Quote { subtotalCents: number; deliveryFeeCents: number | null; deliveryFeePending?: boolean; deliveryDistanceKm?: number | null; discountCents: number; totalCents: number | null; promoSavingsCents: number; minOrderCents: number; belowMinimum: boolean }
+interface Quote { subtotalCents: number; deliveryFeeCents: number | null; deliveryFeePending?: boolean; deliveryDistanceKm?: number | null; discountCents: number; totalCents: number | null; promoSavingsCents: number; minOrderCents: number; belowMinimum: boolean;
+  coupon?: { code: string; label: string; discountCents: number; kind: string } | null; couponError?: string | null }
 interface SavedCustomer { fulfillment?: 'delivery' | 'pickup'; name: string; phone: string; cep: string; street: string; number: string; neighborhoodId: string; neighborhoodName?: string; city?: string; state?: string; complement: string; reference: string }
 
 const SAVED_KEY = 'rangasso.customer.v1';
@@ -40,6 +41,9 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   const [cepInfo, setCepInfo] = useState<string | null>(null);
   const [cepNoStreet, setCepNoStreet] = useState(false); // CEP geral da cidade: o cliente digita a rua
   const [submitting, setSubmitting] = useState(false);
+  // Cupom: o que o cliente digita e o código aplicado (enviado na prévia e no pedido; o servidor confere tudo).
+  const [couponInput, setCouponInput] = useState('');
+  const [couponCode, setCouponCode] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
   // Chave de idempotência: reaproveitada se o último envio teve resultado desconhecido (queda de rede) com os mesmos dados.
   const attempt = useRef<{ key: string; body: string; unknown: boolean } | null>(null);
@@ -62,6 +66,10 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
     return () => clearTimeout(t);
   }, [addrKey]);
 
+  // Telefone completo vai na prévia para o servidor conferir o limite de uso do cupom por cliente.
+  const phoneDigits = digits(form.phone);
+  const quotePhone = couponCode && (phoneDigits.length === 10 || phoneDigits.length === 11) ? phoneDigits : '';
+
   useEffect(() => {
     if (!items.length) return;
     const ctrl = new AbortController();
@@ -71,7 +79,8 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       ? { neighborhoodId: null, neighborhoodName: newHoodName.length >= 2 ? newHoodName : null, city: form.city || null }
       : { neighborhoodId: form.neighborhoodId || null };
     const address = debouncedAddr ? JSON.parse(debouncedAddr) : null;
-    const body = pickup ? { items, fulfillment: 'pickup' } : { items, ...hoodRef, address };
+    const coupon = couponCode ? { couponCode, phone: quotePhone || null } : {};
+    const body = pickup ? { items, fulfillment: 'pickup', ...coupon } : { items, ...hoodRef, address, ...coupon };
     api<Quote>('/api/public/quote', { body, signal: ctrl.signal })
       .then((q) => {
         setQuote(q);
@@ -83,7 +92,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
         setQuoteError({ message: e.message, productId: e.details?.productId, code: e.code });
       });
     return () => ctrl.abort();
-  }, [items, form.neighborhoodId, isNewHood, newHoodName, form.city, debouncedAddr, pickup, byDistance, form.neighborhoodName]);
+  }, [items, form.neighborhoodId, isNewHood, newHoodName, form.city, debouncedAddr, pickup, byDistance, form.neighborhoodName, couponCode, quotePhone]);
 
   // Busca de CEP no ViaCEP (serviço público): preenche rua e bairro. Bairro fora da lista entra com taxa a combinar
   // (se a loja aceitar); a loja define a taxa depois no painel.
@@ -168,6 +177,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       if (!c) e.changeFor = 'Informe o valor para troco.';
       else if (quote?.totalCents != null && c < quote.totalCents) e.changeFor = `O valor precisa ser maior que o total (${brl(quote.totalCents)}).`;
     }
+    if (couponCode && quote?.couponError) e.couponCode = `${quote.couponError} Remova o cupom ou digite outro.`;
     if (!form.privacy) e.privacy = 'É preciso concordar para enviar o pedido.';
     setErrors(e);
     const first = Object.keys(e)[0];
@@ -192,6 +202,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       notes: form.notes.trim(),
       payment: { method: form.payment, changeForCents: form.payment === 'cash' && form.needChange ? moneyToCents(form.changeFor) : null },
       items,
+      couponCode,
       acceptPrivacy: true,
     };
     const bodyStr = JSON.stringify(payload);
@@ -217,6 +228,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
       if (err.code === 'store_closed') reload();
       const field = err.details?.field?.replace('customer.', '').replace('address.', '').replace(/^neighborhoodName$/, isNewHood ? 'neighborhoodName' : 'neighborhoodId').replace('payment.method', 'payment').replace('payment.changeForCents', 'changeFor');
       if (field) setErrors((x) => ({ ...x, [field]: err.message }));
+      if (field === 'couponCode') document.getElementById('f-couponCode')?.focus();
       setSubmitError(err.code === 'network' ? 'A conexão caiu durante o envio. Toque em "Enviar pedido" de novo: se o pedido já tiver chegado, ele não será duplicado.' : err.message);
     } finally {
       setSubmitting(false);
@@ -228,6 +240,20 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
   const feePending = !!quote?.deliveryFeePending;
   // Endereço que o mapa não achou ou fora da área: aparece junto do endereço.
   const addressError = quoteError && (quoteError.code === 'address_not_found' || quoteError.code === 'area_not_served') ? quoteError.message : null;
+  function applyCoupon() {
+    const c = couponInput.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '').toUpperCase();
+    setErrors((e) => ({ ...e, couponCode: '' }));
+    if (!c) return;
+    setCouponCode(c);
+  }
+  function removeCoupon() {
+    setCouponCode('');
+    setCouponInput('');
+    setErrors((e) => ({ ...e, couponCode: '' }));
+  }
+  const couponOk = !!couponCode && quote?.coupon?.code === couponCode;
+  const couponMsg = errors.couponCode || (couponCode && quote?.couponError) || '';
+
   const Err = ({ k }: { k: string }) => (errors[k] ? <span className="field-error" role="alert">{errors[k]}</span> : null);
 
   return (
@@ -416,6 +442,28 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
               <span>Observações do pedido <em className="muted">(opcional)</em></span>
               <textarea id="f-notes" rows={2} maxLength={300} value={form.notes} onChange={(e) => set('notes', e.target.value)} />
             </label>
+            <div className="coupon-box">
+              {couponOk ? (
+                <div className="coupon-applied">
+                  <span>🏷️ Cupom <strong>{couponCode}</strong> aplicado: {quote!.coupon!.label}</span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={removeCoupon}>Remover</button>
+                </div>
+              ) : (
+                <label className="field">
+                  <span>Cupom de desconto <em className="muted">(opcional)</em></span>
+                  <div className="coupon-row">
+                    <input
+                      id="f-couponCode" value={couponInput} maxLength={20} autoCapitalize="characters" autoComplete="off" placeholder="Digite o código"
+                      onChange={(e) => { setCouponInput(e.target.value.toUpperCase()); if (couponCode) setCouponCode(''); setErrors((x) => ({ ...x, couponCode: '' })); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyCoupon(); } }}
+                      aria-invalid={!!couponMsg}
+                    />
+                    <button type="button" className="btn btn-secondary" onClick={applyCoupon} disabled={!couponInput.trim()}>Aplicar</button>
+                  </div>
+                  {couponMsg && <span className="field-error" role="alert">{couponMsg}</span>}
+                </label>
+              )}
+            </div>
             {quoteError ? (
               <div className="alert alert-error">
                 <p>{quoteError.message}</p>
@@ -427,7 +475,7 @@ export function CheckoutPage({ data, reload }: { data: MenuData; reload: () => P
               <div className="totals">
                 <div><span>Subtotal</span><span>{brl(quote?.subtotalCents)}</span></div>
                 {pickup ? <div><span>Retirada na loja</span><span>sem taxa</span></div> : <div><span>Taxa de entrega{quote?.deliveryDistanceKm != null ? ` (${quote.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : hoodLabel ? ` (${hoodLabel})` : ''}</span><span>{feePending ? (byDistance ? 'a combinar (endereço não achado no mapa)' : 'a combinar') : quote?.deliveryFeeCents == null ? 'selecione o bairro' : brl(quote.deliveryFeeCents)}</span></div>}
-                {quote && quote.discountCents > 0 && <div><span>Desconto</span><span>− {brl(quote.discountCents)}</span></div>}
+                {quote && quote.discountCents > 0 && <div className="discount-line"><span>Desconto{quote.coupon ? ` (cupom ${quote.coupon.code})` : ''}</span><span>− {brl(quote.discountCents)}</span></div>}
                 {quote && quote.promoSavingsCents > 0 && <div className="muted small"><span>Você economizou com promoções</span><span>{brl(quote.promoSavingsCents)}</span></div>}
                 <div className="total"><span>{feePending ? 'Total (sem a taxa)' : 'Total'}</span><strong>{quote?.totalCents == null ? '—' : brl(quote.totalCents)}</strong></div>
                 {feePending && <p className="hint">A taxa de entrega do seu bairro ainda vai ser informada pela loja.</p>}

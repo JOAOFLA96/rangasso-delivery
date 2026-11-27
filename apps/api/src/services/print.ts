@@ -62,6 +62,7 @@ export async function buildReceiptPayload(db: Db, storeId: string, orderId: stri
       deliveryDistanceKm: o.delivery_distance_km == null ? null : Number(o.delivery_distance_km),
       deliveryDistanceBy: o.delivery_distance_by ?? null,
       discountCents: o.discount_cents,
+      couponCode: o.coupon_code ?? null,
       totalCents: o.total_cents,
       paymentMethod: o.payment_method,
       changeForCents: o.change_for_cents,
