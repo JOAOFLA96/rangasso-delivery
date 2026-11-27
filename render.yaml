@@ -29,6 +29,9 @@ services:
       # Chave do Google Maps (Routes API): endereço e distância pelas ruas, com prioridade sobre os serviços grátis.
       - key: GOOGLE_MAPS_API_KEY
         sync: false
+      # Chave do Google só para o mapa do painel (Maps JavaScript API), travada no endereço do site.
+      - key: GOOGLE_MAPS_BROWSER_KEY
+        sync: false
       # 99Food (Plataforma Aberta): credenciais do app aprovado no portal de desenvolvedores. Sem elas, integração desligada.
       - key: FOOD99_APP_ID
         sync: false
