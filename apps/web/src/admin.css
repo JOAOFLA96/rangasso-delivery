@@ -173,6 +173,7 @@ code { background: #f1eeeb; padding: 1px 5px; border-radius: 4px; }
 .address-test { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .address-test-result { margin-top: 12px; }
 .pill-pickup { background: #fff1db; color: #8a4b00; }
+.pill-99 { background: #ffd400; color: #1a1a1a; font-weight: 700; margin-left: 6px; }
 
 /* Etiquetas de validade 50 x 30 mm */
 .lbl-layout { display: grid; grid-template-columns: 1fr; gap: 16px; }

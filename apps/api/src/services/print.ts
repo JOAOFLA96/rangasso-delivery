@@ -39,7 +39,7 @@ export async function buildReceiptPayload(db: Db, storeId: string, orderId: stri
       createdAt: o.created_at,
       status: o.status,
       customerName: o.customer_name,
-      customerPhone: formatPhone(o.customer_phone),
+      customerPhone: o.channel === '99food' && o.external_info?.locator ? `${o.customer_phone} ramal ${o.external_info.locator}` : formatPhone(o.customer_phone),
       fulfillment: o.fulfillment,
       // Agentes antigos não conhecem a retirada: a linha da rua avisa na comanda.
       address: o.fulfillment === 'pickup' ? {
@@ -67,6 +67,18 @@ export async function buildReceiptPayload(db: Db, storeId: string, orderId: stri
       totalCents: o.total_cents,
       paymentMethod: o.payment_method,
       changeForCents: o.change_for_cents,
+      // Pedido de app (99Food): origem, número no app, taxas do app e o que receber na entrega.
+      channel: o.channel ?? 'site',
+      ...(o.channel === '99food' ? {
+        externalCode: o.external_short_code,
+        externalDelivery: o.external_delivery,
+        extraFeesCents: o.extra_fees_cents,
+        paymentLabel: o.external_info?.payLabel ?? null,
+        collectCents: o.external_info?.collectCents ?? null,
+        handoverCode: o.external_info?.handoverCode ?? null,
+        takeawayCode: o.external_info?.takeawayCode ?? null,
+        locator: o.external_info?.locator ?? null,
+      } : {}),
     },
     // QR no cupom: o motoboy lê com o celular e o pedido entra na saída dele (agente 1.6.0+).
     ...(o.fulfillment === 'delivery' ? { courierQr: `${config.PUBLIC_URL.replace(/\/$/, '')}/motoboy/pegar/${o.id}` } : {}),

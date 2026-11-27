@@ -29,7 +29,7 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
 export const PICKUP_STATUS_LABELS: Partial<Record<OrderStatus, string>> = { out_for_delivery: 'Pronto para retirar', completed: 'Retirado' };
 export const statusLabel = (status: string, fulfillment: string) =>
   (fulfillment === 'pickup' ? PICKUP_STATUS_LABELS[status as OrderStatus] : undefined) ?? STATUS_LABELS[status as OrderStatus];
-export const PAYMENT_LABELS: Record<string, string> = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega' };
+export const PAYMENT_LABELS: Record<string, string> = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega', online: 'Pago no app' };
 
 // Fluxo só anda para frente (pode pular etapas). Cancelamento só a partir de estados não finais.
 export function canTransition(from: OrderStatus, to: OrderStatus) {
@@ -497,15 +497,18 @@ export async function changeStatus(
   to: OrderStatus,
   userId: string | null,
   note: string,
+  // Chamado com a mudança já validada e antes de gravar (ex.: avisar o 99Food). Se lançar erro, nada é gravado.
+  beforeSave?: (order: any) => Promise<void>,
 ) {
-  const o = await db.query('SELECT id, number, status FROM orders WHERE id = $1 AND store_id = $2 FOR UPDATE', [orderId, storeId]);
+  const o = await db.query('SELECT * FROM orders WHERE id = $1 AND store_id = $2 FOR UPDATE', [orderId, storeId]);
   const order = o.rows[0];
   if (!order) throw notFound('Pedido');
   if (!canTransition(order.status, to)) {
     throw badRequest('invalid_transition', `Não é possível mudar de "${STATUS_LABELS[order.status as OrderStatus]}" para "${STATUS_LABELS[to]}".`);
   }
+  if (to === 'cancelled' && !note.trim()) throw badRequest('reason_required', 'Informe o motivo do cancelamento.');
+  if (beforeSave) await beforeSave(order);
   if (to === 'cancelled') {
-    if (!note.trim()) throw badRequest('reason_required', 'Informe o motivo do cancelamento.');
     // Devolve o estoque dos produtos controlados.
     await db.query(
       `UPDATE products p SET stock_qty = p.stock_qty + s.qty, updated_at = now()

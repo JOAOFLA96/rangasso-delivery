@@ -23,6 +23,8 @@ import { adminSettingsRoutes } from './routes/admin/settings.js';
 import { adminPrinterRoutes } from './routes/admin/printer.js';
 import { adminUserRoutes } from './routes/admin/users.js';
 import { adminLabelRoutes } from './routes/admin/labels.js';
+import { adminFood99Routes } from './routes/admin/food99.js';
+import { food99Routes } from './routes/food99.js';
 import { adminDeliveryRoutes } from './routes/admin/deliveries.js';
 import { adminCouponRoutes } from './routes/admin/coupons.js';
 import { adminMapRoutes } from './routes/admin/map.js';
@@ -98,6 +100,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
   await app.register(publicRoutes, { prefix: '/api/public' });
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(agentRoutes, { prefix: '/api/agent' });
+  await app.register(food99Routes, { prefix: '/api/integrations/99food' });
   await app.register(courierRoutes, { prefix: '/api/courier' });
   await app.register(
     async (admin) => {
@@ -108,6 +111,7 @@ export async function buildApp(opts: { logger?: boolean } = {}) {
       await admin.register(adminPrinterRoutes);
       await admin.register(adminUserRoutes);
       await admin.register(adminLabelRoutes);
+      await admin.register(adminFood99Routes);
       await admin.register(adminDeliveryRoutes);
       await admin.register(adminCouponRoutes);
       await admin.register(adminMapRoutes);

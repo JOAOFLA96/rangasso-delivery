@@ -39,7 +39,7 @@ export const PRINT = {
 } as const;
 export type PrintStatus = keyof typeof PRINT;
 
-export const PAYMENT = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega' } as const;
+export const PAYMENT = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega', online: 'Pago no app' } as const;
 
 export const PRINT_HELP: Partial<Record<PrintStatus, string>> = {
   sent: 'O Windows aceitou a comanda, mas a impressora USB não confirma a impressão física. Confira no balcão.',

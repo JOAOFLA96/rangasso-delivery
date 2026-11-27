@@ -142,3 +142,25 @@ describe('ESC/POS', () => {
     expect(txt).toContain('0123456789'.repeat(5).slice(0, 42));
   });
 });
+
+describe('comanda de pedido do 99Food', () => {
+  it('destaca a origem, o número no app e que já foi pago', () => {
+    const p = orderPayload();
+    p.order = { ...p.order!, paymentMethod: 'online', changeForCents: null, channel: '99food', externalCode: '7', externalDelivery: 'store',
+      paymentLabel: 'Pix', collectCents: 0, extraFeesCents: 300, totalCents: 9780 };
+    const t = renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 });
+    expect(t).toContain('99FOOD Nº 7');
+    expect(t).toContain('PAGAMENTO: Pix (PAGO NO APP)');
+    expect(t).toContain('Nada a receber do cliente');
+    expect(t).toMatch(/Taxas do app\s+R\$ 3,00/);
+  });
+  it('pagamento na entrega mostra quanto receber; entrega do 99 mostra o código do entregador', () => {
+    const p = orderPayload();
+    p.order = { ...p.order!, paymentMethod: 'cash', changeForCents: null, channel: '99food', externalCode: '12', externalDelivery: 'platform',
+      paymentLabel: 'Dinheiro', collectCents: 9480, handoverCode: '5000' };
+    const t = renderText(p, { kind: 'original', reprintNumber: 0, copies: 1 });
+    expect(t).toContain('RECEBER NA ENTREGA: R$ 94,80');
+    expect(t).toContain('ENTREGADOR DO 99FOOD');
+    expect(t).toContain('Código para o entregador: 5000');
+  });
+});

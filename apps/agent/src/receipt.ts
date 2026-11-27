@@ -25,8 +25,17 @@ export interface ReceiptPayload {
     discountCents: number;
     couponCode?: string | null; // cupom de desconto usado no pedido
     totalCents: number;
-    paymentMethod: 'cash' | 'pix' | 'card';
+    paymentMethod: 'cash' | 'pix' | 'card' | 'online';
     changeForCents: number | null;
+    // Pedido vindo de app (99Food)
+    channel?: 'site' | '99food';
+    externalCode?: string | null;
+    externalDelivery?: 'store' | 'platform' | 'pickup' | null;
+    extraFeesCents?: number;
+    paymentLabel?: string | null;
+    collectCents?: number | null;
+    handoverCode?: string | null;
+    takeawayCode?: string | null;
   };
   // Link que o motoboy lê com o celular para colocar o pedido na saída dele (só em pedidos de entrega).
   courierQr?: string;
@@ -34,7 +43,7 @@ export interface ReceiptPayload {
 
 export interface JobMeta { kind: 'original' | 'reprint' | 'test'; reprintNumber: number; copies: number }
 
-const PAY: Record<string, string> = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega' };
+const PAY: Record<string, string> = { cash: 'Dinheiro', pix: 'Pix', card: 'Cartão na entrega', online: 'Pago no app' };
 
 export function brl(cents: number) {
   const neg = cents < 0;
@@ -76,6 +85,8 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
   }
 
   const o = p.order;
+  const app = o.channel === '99food';
+  if (app) L(` 99FOOD${o.externalCode ? ` Nº ${o.externalCode}` : ''} `, { align: 'center', bold: true, big: 'wide', invert: true });
   L(`PEDIDO #${o.number}`, { align: 'center', bold: true, big: 'wide' });
   if (meta.kind === 'reprint') L(` REIMPRESSÃO Nº ${meta.reprintNumber} `, { align: 'center', bold: true, invert: true });
   L(p.store.name, { align: 'center' });
@@ -86,7 +97,9 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
   L(`TEL: ${o.customerPhone}`);
   if (o.fulfillment === 'pickup') {
     L(' RETIRADA NA LOJA ', { align: 'center', bold: true, big: 'wide', invert: true });
+    if (o.takeawayCode) L(`Código de retirada: ${o.takeawayCode}`, { bold: true });
   } else {
+    if (app && o.externalDelivery === 'platform') L('ENTREGADOR DO 99FOOD', { bold: true });
     L('ENTREGA:', { bold: true });
     const a = o.address;
     for (const l of wrap(`${a.street}, ${a.number}${a.complement ? ` - ${a.complement}` : ''}`, W)) L(l, { bold: true });
@@ -106,16 +119,21 @@ export function receiptOps(p: ReceiptPayload, meta: JobMeta, copy: number, print
   const pickup = o.fulfillment === 'pickup';
   const feeLabel = o.deliveryDistanceKm != null ? `Taxa (${o.deliveryDistanceKm.toFixed(1).replace('.', ',')} km)` : 'Taxa de entrega';
   if (!pickup) for (const l of leftRight(feeLabel, o.deliveryFeePending ? 'A COMBINAR' : brl(o.deliveryFeeCents), W)) L(l, { bold: !!o.deliveryFeePending });
+  if (o.extraFeesCents) for (const l of leftRight('Taxas do app', brl(o.extraFeesCents), W)) L(l);
   if (o.discountCents > 0) for (const l of leftRight(o.couponCode ? `Desconto (cupom ${o.couponCode})` : 'Desconto', `-${brl(o.discountCents)}`, W)) L(l);
   for (const l of leftRight(o.deliveryFeePending ? 'TOTAL + TAXA' : 'TOTAL', brl(o.totalCents), W)) L(l, { bold: true, big: 'tall' });
   L(rule(W));
-  L(`PAGAMENTO: ${pickup && o.paymentMethod === 'card' ? 'Cartão na retirada' : PAY[o.paymentMethod] ?? o.paymentMethod}`, { bold: true });
+  const payName = app && o.paymentLabel ? o.paymentLabel : pickup && o.paymentMethod === 'card' ? 'Cartão na retirada' : PAY[o.paymentMethod] ?? o.paymentMethod;
+  L(`PAGAMENTO: ${payName}${app && o.paymentMethod === 'online' ? ' (PAGO NO APP)' : ''}`, { bold: true });
+  if (app && o.paymentMethod !== 'online' && o.collectCents) L(`RECEBER NA ENTREGA: ${brl(o.collectCents)}`, { bold: true });
+  if (app && o.paymentMethod === 'online') L('Nada a receber do cliente', { bold: true });
   if (o.paymentMethod === 'cash') {
     if (o.changeForCents) {
       L(`Troco para ${brl(o.changeForCents)}`);
       L(`LEVAR TROCO: ${brl(o.changeForCents - o.totalCents)}`, { bold: true });
     } else L('Sem troco');
   }
+  if (app && o.handoverCode && o.externalDelivery === 'platform') L(`Código para o entregador: ${o.handoverCode}`, { bold: true });
   if (o.notes) {
     L(rule(W));
     L('OBSERVAÇÕES DO PEDIDO:', { bold: true });

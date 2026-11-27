@@ -4,6 +4,7 @@ import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
 import { getSettings } from './store.js';
 import { addressLine, planTrip, tripPlannerEnabled, type Point, type TripLeg } from './google.js';
 import { canTransition, changeStatus, type OrderStatus } from './orders.js';
+import { pushStatusTo99 } from './food99.js';
 
 // Saídas dos motoboys: junta pedidos de entrega, ordena as paradas (Google, saindo e voltando à loja) e acompanha cada entrega.
 // Sem a chave do Google (ou se ele falhar), a ordem é pela distância de cada pedido até a loja e o motoboy ainda recebe o link.
@@ -11,7 +12,8 @@ import { canTransition, changeStatus, type OrderStatus } from './orders.js';
 export const MAX_STOPS = 10; // o link do Google Maps no celular aceita até 9 paradas intermediárias + o destino
 const ACTIVE_RUN = `('planned','out')`;
 // Pedido que pode entrar numa saída: entrega (não retirada), ainda não concluído/cancelado e fora de outra saída.
-export const AVAILABLE_SQL = `o.fulfillment = 'delivery' AND o.status NOT IN ('completed','cancelled') AND o.delivery_run_id IS NULL`;
+// Pedido do 99Food só entra quando a entrega é da loja (no 99: "entrega própria"); na entrega do 99, quem leva é o entregador do app.
+export const AVAILABLE_SQL = `(o.channel = 'site' OR o.external_delivery = 'store') AND o.fulfillment = 'delivery' AND o.status NOT IN ('completed','cancelled') AND o.delivery_run_id IS NULL`;
 
 export interface StopOrder {
   id: string; number: number; status: OrderStatus; street: string; street_number: string; neighborhood_name: string; city: string; cep: string;
@@ -77,7 +79,7 @@ async function loadOrders(db: Db, storeId: string, ids: string[], runId: string 
   if (!uniq.length) throw badRequest('no_orders', 'Escolha pelo menos um pedido.');
   if (uniq.length > MAX_STOPS) throw badRequest('too_many_stops', `Uma saída leva no máximo ${MAX_STOPS} pedidos.`);
   const r = await db.query(
-    `SELECT ${ORDER_COLS}, o.fulfillment, o.delivery_run_id FROM orders o WHERE o.store_id = $1 AND o.id = ANY($2::uuid[]) ${lock ? 'FOR UPDATE' : ''}`,
+    `SELECT ${ORDER_COLS}, o.fulfillment, o.channel, o.external_delivery, o.delivery_run_id FROM orders o WHERE o.store_id = $1 AND o.id = ANY($2::uuid[]) ${lock ? 'FOR UPDATE' : ''}`,
     [storeId, uniq],
   );
   const byId = new Map(r.rows.map((o) => [o.id, o]));
@@ -85,6 +87,7 @@ async function loadOrders(db: Db, storeId: string, ids: string[], runId: string 
     const o = byId.get(id);
     if (!o) throw notFound('Pedido');
     if (o.fulfillment !== 'delivery') throw badRequest('not_delivery', `O pedido #${o.number} é para retirar na loja.`);
+    if (o.channel === '99food' && o.external_delivery !== 'store') throw badRequest('app_delivery', `O pedido #${o.number} é entregue pelo entregador do 99Food. Para usar nosso motoboy, a loja precisa estar com entrega própria no 99.`);
     if (o.status === 'completed' || o.status === 'cancelled') throw badRequest('order_closed', `O pedido #${o.number} já foi ${o.status === 'completed' ? 'concluído' : 'cancelado'}.`);
     if (o.delivery_run_id && o.delivery_run_id !== runId) throw conflict('order_in_run', `O pedido #${o.number} já está em outra saída.`);
   }
@@ -177,6 +180,7 @@ export async function departRun(c: PoolClient, storeId: string, runId: string, u
     [runId],
   )).rows;
   const changed: { orderId: string; number: number; from: OrderStatus }[] = [];
+  const courier = (await c.query('SELECT name, phone FROM couriers WHERE id = $1', [run.courier_id])).rows[0] ?? null;
   let live = 0;
   for (const s of stops) {
     if (s.status === 'cancelled' || s.status === 'completed') {
@@ -187,7 +191,7 @@ export async function departRun(c: PoolClient, storeId: string, runId: string, u
     }
     live++;
     if (canTransition(s.status, 'out_for_delivery')) {
-      await changeStatus(c, storeId, s.order_id, 'out_for_delivery', userId, `Saída #${run.number}`);
+      await changeStatus(c, storeId, s.order_id, 'out_for_delivery', userId, `Saída #${run.number}`, (o) => pushStatusTo99(c, storeId, o, 'out_for_delivery', '', courier));
       changed.push({ orderId: s.order_id, number: s.number, from: s.status });
     }
   }
@@ -211,7 +215,7 @@ export async function stopOutcome(c: PoolClient, storeId: string, runId: string,
   if (outcome === 'delivered') {
     if (s.status === 'cancelled') throw badRequest('order_closed', `O pedido #${s.number} foi cancelado.`);
     if (canTransition(s.status, 'completed')) {
-      await changeStatus(c, storeId, orderId, 'completed', userId, `Entregue na saída #${run.number}`);
+      await changeStatus(c, storeId, orderId, 'completed', userId, `Entregue na saída #${run.number}`, (o) => pushStatusTo99(c, storeId, o, 'completed', ''));
       changed = { from: s.status };
     }
   } else {
