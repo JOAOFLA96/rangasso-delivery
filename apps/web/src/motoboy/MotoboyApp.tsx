@@ -134,33 +134,53 @@ function Scanner({ onCode, onClose }: { onCode: (orderId: string) => Promise<str
 
 // Rastreio durante a saída: o celular manda a posição para a loja (no máximo a cada 20 s) e mantém a tela acesa.
 // Para sozinho quando a saída termina ou o servidor recusa. No navegador, para também se a página fechar ou o celular travar a tela.
-type Track = 'off' | 'on' | 'denied' | 'unsupported';
-function useTracking(token: string | undefined, active: boolean): Track {
+// O pedido de permissão sai de um toque do motoboy (iPhone só pergunta com toque), e a tela mostra o estado e a hora do último envio.
+type Track = 'off' | 'asking' | 'on' | 'denied' | 'unsupported';
+const GEO_OPTS: PositionOptions = { enableHighAccuracy: true, maximumAge: 10_000, timeout: 30_000 };
+const isIOS = () => /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+// Chamado no toque de "estou saindo" ou "Ativar localização": faz o celular mostrar o pedido de permissão.
+function askLocation(): Promise<'granted' | 'denied' | 'unsupported'> {
+  if (!('geolocation' in navigator)) return Promise.resolve('unsupported');
+  return new Promise((resolve) => navigator.geolocation.getCurrentPosition(
+    () => resolve('granted'),
+    (e) => resolve(e.code === e.PERMISSION_DENIED ? 'denied' : 'granted'),
+    GEO_OPTS,
+  ));
+}
+
+function useTracking(token: string | undefined, active: boolean, retry: number): { state: Track; sentAt: number | null } {
   const [state, setState] = useState<Track>('off');
+  const [sentAt, setSentAt] = useState<number | null>(null);
   useEffect(() => {
     if (!active || !token) { setState('off'); return; }
     if (!('geolocation' in navigator)) { setState('unsupported'); return; }
+    setState('asking');
     let last = 0;
     let stopped = false;
     let lock: any = null;
     const keepAwake = async () => { try { lock = await (navigator as any).wakeLock?.request('screen'); } catch { /* sem suporte */ } };
     keepAwake();
-    const onVis = () => document.visibilityState === 'visible' && keepAwake();
+    const send = (p: GeolocationPosition, force = false) => {
+      setState('on');
+      if (stopped || (!force && Date.now() - last < 20_000)) return;
+      last = Date.now();
+      api(`/api/courier/${token}/location`, { method: 'POST', body: { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy } })
+        .then(() => setSentAt(Date.now()))
+        .catch((e) => { if (e instanceof ApiError && e.code === 'not_out') stopped = true; });
+    };
+    const fail = (e: GeolocationPositionError) => { if (e.code === e.PERMISSION_DENIED) setState('denied'); };
+    // Ao voltar para a página (tela destravada), manda a posição na hora.
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      keepAwake();
+      navigator.geolocation.getCurrentPosition((p) => send(p, true), fail, GEO_OPTS);
+    };
     document.addEventListener('visibilitychange', onVis);
-    const id = navigator.geolocation.watchPosition(
-      (p) => {
-        setState('on');
-        if (stopped || Date.now() - last < 20_000) return;
-        last = Date.now();
-        api(`/api/courier/${token}/location`, { method: 'POST', body: { lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy } })
-          .catch((e) => { if (e instanceof ApiError && e.code === 'not_out') stopped = true; });
-      },
-      (e) => setState(e.code === e.PERMISSION_DENIED ? 'denied' : 'on'),
-      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 30_000 },
-    );
+    const id = navigator.geolocation.watchPosition((p) => send(p), fail, GEO_OPTS);
     return () => { navigator.geolocation.clearWatch(id); document.removeEventListener('visibilitychange', onVis); lock?.release?.().catch?.(() => undefined); };
-  }, [token, active]);
-  return state;
+  }, [token, active, retry]);
+  return { state, sentAt };
 }
 
 export default function MotoboyApp() {
@@ -171,7 +191,8 @@ export default function MotoboyApp() {
   const [swap, setSwap] = useState<{ ref: { orderId?: string; number?: number }; message: string } | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [isOut, setIsOut] = useState(false);
-  const track = useTracking(token, isOut);
+  const [geoRetry, setGeoRetry] = useState(0);
+  const { state: track, sentAt } = useTracking(token, isOut, geoRetry);
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -295,17 +316,31 @@ export default function MotoboyApp() {
             {(cashToCollect > 0 || changeToBring > 0) && (
               <p className="mb-money">💵 Dinheiro a cobrar: <strong>{brl(cashToCollect)}</strong>{changeToBring ? <> · leve <strong>{brl(changeToBring)}</strong> de troco</> : null}</p>
             )}
-            {run.status === 'out' && (
-              <p className={`mb-track ${track}`}>
-                {track === 'denied' ? '📍 Localização bloqueada: a loja não vê onde você está. Libere a localização deste site nas configurações do navegador.'
-                  : track === 'unsupported' ? '📍 Este navegador não envia localização.'
-                  : '📍 Enquanto você está na rua, sua localização vai para a loja. Para quando você voltar. Deixe esta página aberta.'}
-              </p>
-            )}
-            {run.status === 'planned' && <p className="mb-muted small">Ao sair, a loja passa a ver sua localização no mapa até você voltar (o celular vai pedir permissão).</p>}
+            {run.status === 'out' && (() => {
+              const stale = track === 'on' && (!sentAt || Date.now() - sentAt > 120_000);
+              return (
+                <div className={`mb-track ${track === 'on' && !stale ? 'on' : 'warn'}`}>
+                  {track === 'on' && !stale && <p>📍 Localização ligada: a loja vê você no mapa{sentAt ? ` (enviada às ${formatTime(new Date(sentAt).toISOString())})` : ''}. Deixe esta página aberta.</p>}
+                  {track === 'on' && stale && <p>📍 Localização parada. Deixe esta página aberta na tela enquanto estiver na rua.</p>}
+                  {track === 'asking' && <p>📍 Toque em <b>Ativar localização</b> e depois em <b>Permitir</b> para a loja ver onde você está.</p>}
+                  {track === 'denied' && (
+                    <p>📍 Localização bloqueada: a loja não vê onde você está.<br />
+                      {isIOS()
+                        ? <>No iPhone: <b>Ajustes › Privacidade e Segurança › Serviços de Localização</b> › ligue, depois toque no Safari (ou Chrome) e escolha <b>Durante o Uso</b>. Volte aqui e toque em Ativar localização.</>
+                        : <>No Android: toque no <b>cadeado</b> ao lado do endereço › <b>Permissões › Localização › Permitir</b>. Confira se a localização do celular está ligada. Depois toque em Ativar localização.</>}
+                    </p>
+                  )}
+                  {track === 'unsupported' && <p>📍 Este navegador não envia localização. Abra o link no Chrome ou no Safari.</p>}
+                  {track !== 'unsupported' && (track !== 'on' || stale) && (
+                    <button className="mb-btn mb-primary" onClick={async () => { await askLocation(); setGeoRetry((n) => n + 1); }}>📍 Ativar localização</button>
+                  )}
+                </div>
+              );
+            })()}
+            {run.status === 'planned' && <p className="mb-muted small">Ao sair, o celular pede para usar a localização: toque em <b>Permitir</b>. A loja vê você no mapa até você voltar.</p>}
             {run.mapsUrl && <a className="mb-btn mb-secondary" href={run.mapsUrl} target="_blank" rel="noreferrer">🗺️ Rota completa no Google Maps</a>}
             {run.status === 'planned' && (
-              <button className="mb-btn mb-primary" disabled={busy === 'depart'} onClick={() => act('depart', `/runs/${run.id}/depart`)}>
+              <button className="mb-btn mb-primary" disabled={busy === 'depart'} onClick={async () => { await askLocation(); act('depart', `/runs/${run.id}/depart`); }}>
                 {busy === 'depart' ? 'Registrando…' : '🛵 Peguei os pedidos, estou saindo'}
               </button>
             )}

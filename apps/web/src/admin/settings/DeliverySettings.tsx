@@ -168,7 +168,7 @@ function DistanceFee({ data, reload }: { data: SettingsData; reload: () => Promi
           </div>
           {hasPoint && (
             <p className="small">
-              <a href={`https://www.openstreetmap.org/?mlat=${parseNum(lat)}&mlon=${parseNum(lng)}#map=18/${parseNum(lat)}/${parseNum(lng)}`} target="_blank" rel="noreferrer">
+              <a href={`https://www.google.com/maps/search/?api=1&query=${parseNum(lat)},${parseNum(lng)}`} target="_blank" rel="noreferrer">
                 Conferir o ponto no mapa ↗
               </a>{' '}
               <span className="muted">(se estiver errado, copie a latitude e longitude certas do Google Maps: clique com o botão direito no local)</span>
